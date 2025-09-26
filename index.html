@@ -102,30 +102,32 @@
                 `;
                 container.appendChild(uploaderEl);
             });
-
-            setupEventListeners();
+            
+            uploaders.forEach(uploader => {
+                setupEventListenersForUploader(uploader.id);
+            });
         });
 
-        function setupEventListeners() {
-            uploaders.forEach(uploader => {
-                const dropZone = document.getElementById(`drop-zone-${uploader.id}`);
-                const fileInput = document.getElementById(`file-input-${uploader.id}`);
+        function setupEventListenersForUploader(uploaderId) {
+            const dropZone = document.getElementById(`drop-zone-${uploaderId}`);
+            const fileInput = document.getElementById(`file-input-${uploaderId}`);
+            
+            if (!dropZone || !fileInput) return;
 
-                ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                    dropZone.addEventListener(eventName, preventDefaults, false);
-                });
-
-                ['dragenter', 'dragover'].forEach(eventName => {
-                    dropZone.addEventListener(eventName, () => dropZone.classList.add('dragover'), false);
-                });
-
-                ['dragleave', 'drop'].forEach(eventName => {
-                    dropZone.addEventListener(eventName, () => dropZone.classList.remove('dragover'), false);
-                });
-
-                dropZone.addEventListener('drop', (e) => handleDrop(e, uploader.id), false);
-                fileInput.addEventListener('change', (e) => handleFileSelect(e, uploader.id), false);
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, preventDefaults, false);
             });
+
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, () => dropZone.classList.add('dragover'), false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, () => dropZone.classList.remove('dragover'), false);
+            });
+
+            dropZone.addEventListener('drop', (e) => handleDrop(e, uploaderId), false);
+            fileInput.addEventListener('change', (e) => handleFileSelect(e, uploaderId), false);
         }
 
         function preventDefaults(e) {
@@ -166,7 +168,7 @@
                 <input type="file" id="file-input-${uploaderId}" class="hidden" accept=".xlsx">
                 <p class="text-gray-400">ลากไฟล์ .xlsx มาวางที่นี่</p>
                 <p class="text-gray-500 my-2">หรือ</p>
-                <button type="button" onclick="document.getElementById('file-input-${uploader.id}').click()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition-colors">
+                <button type="button" onclick="document.getElementById('file-input-${uploaderId}').click()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition-colors">
                     เลือกไฟล์
                 </button>
              `;
@@ -174,7 +176,6 @@
 
         async function handleFile(file, uploaderId) {
             const uploaderConfig = uploaders.find(u => u.id === uploaderId);
-            const logEl = document.getElementById(`log-${uploaderId}`);
             const appsScriptUrl = document.getElementById('appsScriptUrl').value;
             
             logMessage(uploaderId, `กำลังเริ่มอัพโหลดไฟล์: ${file.name}`);
@@ -238,16 +239,15 @@
                 } catch (error) {
                     logMessage(uploaderId, `เกิดข้อผิดพลาด: ${error.message}`, true);
                 } finally {
-                    // *** THIS IS THE FIX ***
-                    // We only need to call resetDropZone.
-                    // The problematic line that tried to clear the file input's value has been removed.
                     resetDropZone(uploaderId);
+                    setupEventListenersForUploader(uploaderId); // Re-attach listeners for the new elements
                 }
             };
 
             reader.onerror = (error) => {
                 logMessage(uploaderId, 'เกิดข้อผิดพลาดในการอ่านไฟล์', true);
                 resetDropZone(uploaderId);
+                setupEventListenersForUploader(uploaderId);
             };
 
             reader.readAsBinaryString(file);
