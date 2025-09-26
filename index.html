@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DashboardSales July 2025 - Uploader</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Sarabun', sans-serif;
+        }
+        .drop-zone {
+            border: 2px dashed #4a5568;
+            border-radius: 0.5rem;
+            transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+        }
+        .drop-zone.dragover {
+            background-color: #2d3748;
+            border-color: #63b3ed;
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen p-4 sm:p-6 lg:p-8">
+    <div class="max-w-7xl mx-auto">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl sm:text-4xl font-bold text-blue-400">DashboardSales July 2025 Uploader</h1>
+            <p class="text-gray-400 mt-2">อัพโหลดไฟล์ Excel (.xlsx) เพื่ออัพเดทข้อมูลใน Google Sheet</p>
+        </header>
+
+        <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
+            <label for="appsScriptUrl" class="block text-lg font-semibold mb-2 text-gray-200">1. วาง Google Apps Script Web App URL ที่นี่:</label>
+            <input type="url" id="appsScriptUrl" placeholder="https://script.google.com/macros/s/..." class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <p class="text-sm text-gray-500 mt-2">คุณต้อง Deploy Google Apps Script ก่อนเพื่อรับ URL นี้ (URL จะถูกบันทึกไว้ในเบราว์เซอร์ของคุณโดยอัตโนมัติ)</p>
+        </div>
+
+        <main id="uploader-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <!-- Uploaders will be dynamically generated here -->
+        </main>
+    </div>
+
+    <script>
+        const SPREADSHEET_ID = '1bQyqKpH7yxafv8Tg3ufVjCOsG8soCrV-PUJc65pCJ28';
+
+        const uploaders = [
+            { id: 1, title: "Sales compare Line-Brand-Channel-Group-Item", targetTab: "Data_uploadD1" },
+            { id: 2, title: "Sales compare Brand-NSM-SM-Rep-Customer", targetTab: "Data_uploadD2" },
+            { id: 3, title: "Sales compare Line-Brand-Rep-Customer Group-Customer", targetTab: "Data_uploadD3" },
+            { id: 4, title: "Sales compare Brand-Group- NSM-SM-Rep (Cycle to Date)", targetTab: "Data_uploadD4" },
+            { id: 5, title: "Sales compare Brand-Group- NSM-SM-Rep (Half year to date)", targetTab: "Data_uploadD5" },
+            { id: 6, title: "Sales compare Brand-Group- NSM-SM-Rep (YTD)", targetTab: "Data_uploadD6" },
+            { id: 7, title: "Sales compare NSM-Brand-Item-Month (Jan-Dec)", targetTab: "Data_uploadD7" },
+            { id: 8, title: "Sales compare SM-Rep-Brand-Item-Month (Jan-Dec)", targetTab: "Data_uploadD8" },
+            { id: 9, title: "MAT SM-Rep-Brand-Item-Customer", targetTab: "Data_uploadD9" }
+        ];
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const container = document.getElementById('uploader-container');
+            const appsScriptUrlInput = document.getElementById('appsScriptUrl');
+
+            // Load saved URL from localStorage
+            const savedUrl = localStorage.getItem('appsScriptUrl');
+            if (savedUrl) {
+                appsScriptUrlInput.value = savedUrl;
+            }
+
+            // Save URL to localStorage on input
+            appsScriptUrlInput.addEventListener('input', (e) => {
+                localStorage.setItem('appsScriptUrl', e.target.value);
+            });
+
+            uploaders.forEach(uploader => {
+                const uploaderEl = document.createElement('div');
+                uploaderEl.className = 'bg-gray-800 p-6 rounded-lg shadow-lg flex flex-col';
+                uploaderEl.innerHTML = `
+                    <div class="flex-grow">
+                        <h2 class="text-xl font-bold text-gray-100 mb-1">${uploader.title}</h2>
+                        <p class="text-sm font-semibold text-blue-400 mb-4">Google Sheet Tab: <span class="font-mono">${uploader.targetTab}</span></p>
+                        <div id="drop-zone-${uploader.id}" class="drop-zone p-8 text-center cursor-pointer">
+                            <input type="file" id="file-input-${uploader.id}" class="hidden" accept=".xlsx">
+                            <p class="text-gray-400">ลากไฟล์ .xlsx มาวางที่นี่</p>
+                            <p class="text-gray-500 my-2">หรือ</p>
+                            <button type="button" onclick="document.getElementById('file-input-${uploader.id}').click()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition-colors">
+                                เลือกไฟล์
+                            </button>
+                        </div>
+                    </div>
+                    <div id="log-${uploader.id}" class="mt-4 p-3 bg-gray-900 rounded-md h-28 overflow-y-auto text-sm font-mono">
+                        <p class="text-gray-500">รอการอัพโหลด...</p>
+                    </div>
+                `;
+                container.appendChild(uploaderEl);
+            });
+
+            setupEventListeners();
+        });
+
+        function setupEventListeners() {
+            uploaders.forEach(uploader => {
+                const dropZone = document.getElementById(`drop-zone-${uploader.id}`);
+                const fileInput = document.getElementById(`file-input-${uploader.id}`);
+
+                ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                    dropZone.addEventListener(eventName, preventDefaults, false);
+                });
+
+                ['dragenter', 'dragover'].forEach(eventName => {
+                    dropZone.addEventListener(eventName, () => dropZone.classList.add('dragover'), false);
+                });
+
+                ['dragleave', 'drop'].forEach(eventName => {
+                    dropZone.addEventListener(eventName, () => dropZone.classList.remove('dragover'), false);
+                });
+
+                dropZone.addEventListener('drop', (e) => handleDrop(e, uploader.id), false);
+                fileInput.addEventListener('change', (e) => handleFileSelect(e, uploader.id), false);
+            });
+        }
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        function handleDrop(e, uploaderId) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if (files.length > 0) {
+                handleFile(files[0], uploaderId);
+            }
+        }
+        
+        function handleFileSelect(e, uploaderId) {
+            const files = e.target.files;
+            if (files.length > 0) {
+                handleFile(files[0], uploaderId);
+            }
+        }
+
+        function logMessage(uploaderId, message, isError = false) {
+            const logEl = document.getElementById(`log-${uploaderId}`);
+            const timestamp = new Date().toLocaleTimeString('th-TH');
+            const colorClass = isError ? 'text-red-400' : 'text-green-400';
+            logEl.innerHTML = `<p class="whitespace-pre-wrap"><span class="${colorClass}">[${timestamp}] ${message}</span></p>` + logEl.innerHTML;
+        }
+        
+        function showLoading(uploaderId) {
+            const dropZone = document.getElementById(`drop-zone-${uploaderId}`);
+            dropZone.innerHTML = `<div class="flex flex-col items-center justify-center"><div class="loader"></div><p class="mt-4 text-yellow-400">กำลังประมวลผลและอัพโหลด...</p></div>`;
+        }
+        
+        function resetDropZone(uploaderId) {
+             const dropZone = document.getElementById(`drop-zone-${uploaderId}`);
+             dropZone.innerHTML = `
+                <input type="file" id="file-input-${uploaderId}" class="hidden" accept=".xlsx">
+                <p class="text-gray-400">ลากไฟล์ .xlsx มาวางที่นี่</p>
+                <p class="text-gray-500 my-2">หรือ</p>
+                <button type="button" onclick="document.getElementById('file-input-${uploader.id}').click()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition-colors">
+                    เลือกไฟล์
+                </button>
+             `;
+        }
+
+        async function handleFile(file, uploaderId) {
+            const uploaderConfig = uploaders.find(u => u.id === uploaderId);
+            const logEl = document.getElementById(`log-${uploaderId}`);
+            const appsScriptUrl = document.getElementById('appsScriptUrl').value;
+            
+            logMessage(uploaderId, `กำลังเริ่มอัพโหลดไฟล์: ${file.name}`);
+
+            if (!appsScriptUrl) {
+                logMessage(uploaderId, 'ข้อผิดพลาด: กรุณาใส่ Google Apps Script Web App URL ก่อน', true);
+                alert('กรุณาใส่ Google Apps Script Web App URL ก่อนทำการอัพโหลด');
+                return;
+            }
+
+            if (!file.type.match('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')) {
+                logMessage(uploaderId, `ข้อผิดพลาด: ไฟล์ "${file.name}" ไม่ใช่ไฟล์ .xlsx`, true);
+                return;
+            }
+            
+            showLoading(uploaderId);
+
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const data = e.target.result;
+                    const workbook = XLSX.read(data, { type: 'binary' });
+                    const sheetName = "DATA";
+
+                    if (!workbook.SheetNames.includes(sheetName)) {
+                        throw new Error(`ไม่พบแท็บชื่อ "DATA" ในไฟล์ Excel`);
+                    }
+
+                    const worksheet = workbook.Sheets[sheetName];
+                    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                    
+                    logMessage(uploaderId, `พบข้อมูล ${jsonData.length} แถวในแท็บ "DATA"`);
+
+                    const payload = {
+                        spreadsheetId: SPREADSHEET_ID,
+                        sheetName: uploaderConfig.targetTab,
+                        data: jsonData
+                    };
+                    
+                    logMessage(uploaderId, `กำลังส่งข้อมูลไปยัง Google Sheet Tab: ${uploaderConfig.targetTab}...`);
+
+                    const response = await fetch(appsScriptUrl, {
+                        method: 'POST',
+                        mode: 'cors',
+                        cache: 'no-cache',
+                        headers: {
+                            'Content-Type': 'text/plain;charset=utf-8',
+                        },
+                        body: JSON.stringify(payload),
+                        redirect: 'follow'
+                    });
+
+                    const result = await response.json();
+
+                    if (result.status === 'success') {
+                        logMessage(uploaderId, `อัพโหลดไปยัง "${uploaderConfig.targetTab}" สำเร็จ! อัพเดท ${result.rows} แถว.`);
+                    } else {
+                        throw new Error(result.message || 'เกิดข้อผิดพลาดที่ไม่รู้จักจาก Apps Script');
+                    }
+
+                } catch (error) {
+                    logMessage(uploaderId, `เกิดข้อผิดพลาด: ${error.message}`, true);
+                } finally {
+                    resetDropZone(uploaderId);
+                    // Reset file input to allow re-uploading the same file
+                    document.getElementById(`file-input-${uploaderId}`).value = '';
+                }
+            };
+
+            reader.onerror = (error) => {
+                logMessage(uploaderId, 'เกิดข้อผิดพลาดในการอ่านไฟล์', true);
+                resetDropZone(uploaderId);
+            };
+
+            reader.readAsBinaryString(file);
+        }
+    </script>
+</body>
+</html>
+
