@@ -71,13 +71,11 @@
             const container = document.getElementById('uploader-container');
             const appsScriptUrlInput = document.getElementById('appsScriptUrl');
 
-            // Load saved URL from localStorage
             const savedUrl = localStorage.getItem('appsScriptUrl');
             if (savedUrl) {
                 appsScriptUrlInput.value = savedUrl;
             }
 
-            // Save URL to localStorage on input
             appsScriptUrlInput.addEventListener('input', (e) => {
                 localStorage.setItem('appsScriptUrl', e.target.value);
             });
@@ -240,9 +238,10 @@
                 } catch (error) {
                     logMessage(uploaderId, `เกิดข้อผิดพลาด: ${error.message}`, true);
                 } finally {
+                    // *** THIS IS THE FIX ***
+                    // We only need to call resetDropZone.
+                    // The problematic line that tried to clear the file input's value has been removed.
                     resetDropZone(uploaderId);
-                    // Reset file input to allow re-uploading the same file
-                    document.getElementById(`file-input-${uploaderId}`).value = '';
                 }
             };
 
