@@ -8,7 +8,9 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Sarabun', sans-serif; }
+        body {
+            font-family: 'Sarabun', sans-serif;
+        }
         .drop-zone {
             border: 2px dashed #4a5568;
             border-radius: 0.5rem;
@@ -41,7 +43,7 @@
 
         <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
             <label for="appsScriptUrl" class="block text-lg font-semibold mb-2 text-gray-200">1. วาง Google Apps Script Web App URL ที่นี่:</label>
-            <input type="url" id="appsScriptUrl" placeholder="https://script.google.com/macros/s/..." class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <input type="url" id="appsScriptUrl" placeholder="https://script.google.com/macros/s/.../exec" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
             <p class="text-sm text-gray-500 mt-2">คุณต้อง Deploy Google Apps Script ก่อนเพื่อรับ URL นี้ (URL จะถูกบันทึกไว้ในเบราว์เซอร์ของคุณโดยอัตโนมัติ)</p>
         </div>
 
@@ -52,8 +54,6 @@
 
     <script>
         const SPREADSHEET_ID = '1bQyqKpH7yxafv8Tg3ufVjCOsG8soCrV-PUJc65pCJ28';
-        const CHUNK_SIZE = 1000; // แบ่งส่งทีละ 1000 แถว
-        const processingMap = {}; // ตัวแปรป้องกันปัญหายิงซ้ำ
 
         const uploaders = [
             { id: 1, title: "Sales compare Line-Brand-Channel-Group-Item", targetTab: "Data_uploadD1" },
@@ -77,7 +77,7 @@
             }
 
             appsScriptUrlInput.addEventListener('input', (e) => {
-                localStorage.setItem('appsScriptUrl', e.target.value);
+                localStorage.setItem('appsScriptUrl', e.target.value.trim());
             });
 
             uploaders.forEach(uploader => {
@@ -175,24 +175,19 @@
         }
 
         async function handleFile(file, uploaderId) {
-            if (processingMap[uploaderId]) return; // ป้องกันการอัปโหลดซ้ำซ้อน
-            processingMap[uploaderId] = true;
-
             const uploaderConfig = uploaders.find(u => u.id === uploaderId);
-            const appsScriptUrl = document.getElementById('appsScriptUrl').value;
+            const appsScriptUrl = document.getElementById('appsScriptUrl').value.trim();
             
             logMessage(uploaderId, `กำลังเริ่มอัพโหลดไฟล์: ${file.name}`);
 
             if (!appsScriptUrl) {
                 logMessage(uploaderId, 'ข้อผิดพลาด: กรุณาใส่ Google Apps Script Web App URL ก่อน', true);
                 alert('กรุณาใส่ Google Apps Script Web App URL ก่อนทำการอัพโหลด');
-                processingMap[uploaderId] = false;
                 return;
             }
 
             if (!file.name.endsWith('.xlsx')) {
                 logMessage(uploaderId, `ข้อผิดพลาด: ไฟล์ "${file.name}" ไม่ใช่ไฟล์ .xlsx`, true);
-                processingMap[uploaderId] = false;
                 return;
             }
             
@@ -210,58 +205,55 @@
                     }
 
                     const worksheet = workbook.Sheets[sheetName];
-                    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-                    const totalRows = jsonData.length;
+                    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
                     
-                    logMessage(uploaderId, `พบข้อมูลทั้งหมด ${totalRows} แถวในแท็บ "DATA"`);
+                    logMessage(uploaderId, `พบข้อมูล ${jsonData.length} แถวในแท็บ "DATA"`);
 
-                    // แบ่งข้อมูลส่งเป็น Batch
-                    for (let i = 0; i < totalRows; i += CHUNK_SIZE) {
-                        const chunk = jsonData.slice(i, i + CHUNK_SIZE);
-                        const isFirstChunk = (i === 0);
-                        const currentEnd = Math.min(i + CHUNK_SIZE, totalRows);
+                    const payload = {
+                        spreadsheetId: SPREADSHEET_ID,
+                        sheetName: uploaderConfig.targetTab,
+                        data: jsonData
+                    };
+                    
+                    logMessage(uploaderId, `กำลังส่งข้อมูลไปยัง Google Sheet Tab: ${uploaderConfig.targetTab}...`);
 
-                        logMessage(uploaderId, `กำลังส่งแถวที่ ${i + 1} ถึง ${currentEnd} จาก ${totalRows}...`);
+                    const response = await fetch(appsScriptUrl, {
+                        method: 'POST',
+                        mode: 'cors',
+                        cache: 'no-cache',
+                        headers: {
+                            'Content-Type': 'text/plain;charset=utf-8',
+                        },
+                        body: JSON.stringify(payload),
+                        redirect: 'follow'
+                    });
 
-                        const payload = {
-                            spreadsheetId: SPREADSHEET_ID,
-                            sheetName: uploaderConfig.targetTab,
-                            data: chunk,
-                            isFirstChunk: isFirstChunk
-                        };
-
-                        const response = await fetch(appsScriptUrl, {
-                            method: 'POST',
-                            mode: 'cors',
-                            cache: 'no-cache',
-                            headers: {
-                                'Content-Type': 'text/plain;charset=utf-8',
-                            },
-                            body: JSON.stringify(payload),
-                            redirect: 'follow'
-                        });
-
-                        const responseText = await response.text();
-                        let result;
-                        try {
-                            result = JSON.parse(responseText);
-                        } catch (err) {
-                            throw new Error("Google Apps Script ตอบกลับเป็นหน้าเว็บ HTML (โปรดตรวจสอบสิทธิ์เป็น Anyone)");
-                        }
-
-                        if (result.status !== 'success') {
-                            throw new Error(result.message || 'เกิดข้อผิดพลาดจาก Apps Script');
+                    const responseText = await response.text();
+                    let result;
+                    try {
+                        result = JSON.parse(responseText);
+                    } catch (parseError) {
+                        if (responseText.trim().startsWith('<')) {
+                            throw new Error('Google Apps Script ตอบกลับเป็นหน้าเว็บ HTML (ไม่ได้ตอบกลับเป็น JSON)\n' +
+                                            'โปรดตรวจสอบ:\n' +
+                                            '1. ใน Apps Script ตั้งค่า "Who has access" เป็น "Anyone" (ทุกคน) แล้วหรือยัง?\n' +
+                                            '2. URL สภาพเป็น Web App URL ที่ลงท้ายด้วย /exec หรือยัง?');
+                        } else {
+                            throw new Error(`คำตอบจากเซิร์ฟเวอร์ไม่ถูกต้อง: ${responseText.substring(0, 80)}...`);
                         }
                     }
 
-                    logMessage(uploaderId, `อัพโหลดไปยัง "${uploaderConfig.targetTab}" สำเร็จครบถ้วน! รวม ${totalRows} แถว.`);
+                    if (result.status === 'success') {
+                        logMessage(uploaderId, `อัพโหลดไปยัง "${uploaderConfig.targetTab}" สำเร็จ! อัพเดท ${result.rows} แถว.`);
+                    } else {
+                        throw new Error(result.message || 'เกิดข้อผิดพลาดจาก Apps Script');
+                    }
 
                 } catch (error) {
                     logMessage(uploaderId, `เกิดข้อผิดพลาด: ${error.message}`, true);
                 } finally {
                     resetDropZone(uploaderId);
                     setupEventListenersForUploader(uploaderId);
-                    processingMap[uploaderId] = false;
                 }
             };
 
@@ -269,7 +261,6 @@
                 logMessage(uploaderId, 'เกิดข้อผิดพลาดในการอ่านไฟล์', true);
                 resetDropZone(uploaderId);
                 setupEventListenersForUploader(uploaderId);
-                processingMap[uploaderId] = false;
             };
 
             reader.readAsBinaryString(file);
