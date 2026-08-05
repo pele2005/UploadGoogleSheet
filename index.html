@@ -43,7 +43,7 @@
 
         <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
             <label for="appsScriptUrl" class="block text-lg font-semibold mb-2 text-gray-200">1. วาง Google Apps Script Web App URL ที่นี่:</label>
-            <input type="url" id="appsScriptUrl" placeholder="https://script.google.com/macros/s/..." class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <input type="url" id="appsScriptUrl" placeholder="https://script.google.com/macros/s/.../exec" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
             <p class="text-sm text-gray-500 mt-2">คุณต้อง Deploy Google Apps Script ก่อนเพื่อรับ URL นี้ (URL จะถูกบันทึกไว้ในเบราว์เซอร์ของคุณโดยอัตโนมัติ)</p>
         </div>
 
@@ -228,7 +228,20 @@
                         redirect: 'follow'
                     });
 
-                    const result = await response.json();
+                    const responseText = await response.text();
+                    let result;
+                    try {
+                        result = JSON.parse(responseText);
+                    } catch (parseError) {
+                        if (responseText.trim().startsWith('<')) {
+                            throw new Error('Google Apps Script ตอบกลับเป็นหน้าเว็บ HTML (ไม่ได้ตอบกลับเป็น JSON)\n' +
+                                            'โปรดตรวจสอบ:\n' +
+                                            '1. ใน Apps Script ตั้งค่า "Who has access" เป็น "Anyone" (ทุกคน) แล้วหรือยัง?\n' +
+                                            '2. URL สภาพเป็น Web App URL ที่ลงท้ายด้วย /exec หรือยัง?');
+                        } else {
+                            throw new Error(`คำตอบจากเซิร์ฟเวอร์ไม่ถูกต้อง: ${responseText.substring(0, 80)}...`);
+                        }
+                    }
 
                     if (result.status === 'success') {
                         logMessage(uploaderId, `อัพโหลดไปยัง "${uploaderConfig.targetTab}" สำเร็จ! อัพเดท ${result.rows} แถว.`);
