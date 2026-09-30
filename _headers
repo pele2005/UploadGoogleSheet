@@ -1,0 +1,5 @@
+/apps-script/*
+  Content-Type: text/plain; charset=utf-8
+
+/automation/*
+  Cache-Control: no-cache
