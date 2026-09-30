@@ -1,40 +1,41 @@
 /*
  * SIS → Google Sheet sync  (runs inside a logged-in SIS4 tab)
  *
- * Drives the SIS4 report forms exactly like a person would (Group By, Month
- * Range, Export Type = EXCEL, click Export), catches the exported .xlsx in
- * memory instead of downloading it, reads the "DATA" tab with SheetJS and sends
- * the rows to the Google Apps Script web app — the same payload the uploader
- * page (uploadgooglesheet.netlify.app) sends.
+ * For each report D1…D9 it clicks SIS's own "Export" button. Just before SIS
+ * sends the export request, the report parameters in the request body
+ * (Group By, month range / as-of month) are replaced with the ones for that
+ * report. SIS adds its own login to the request — this script never reads or
+ * stores any credential. The exported .xlsx is caught in memory (no download),
+ * its "DATA" tab is read with SheetJS and the rows are sent to the Google Apps
+ * Script web app — the same payload the uploader page sends.
+ *
+ * Works in a background tab: waits are event-driven (DOM / network), not
+ * timer polling, so Chrome's background-tab throttling doesn't stall it.
  *
  * Usage (in the SIS tab, after login):
- *   await SISSync.run({ appsScriptUrl: 'https://script.google.com/macros/s/.../exec' })
- *   await SISSync.run({ appsScriptUrl, only: [1,3], dryRun: true })   // test without writing
- *
- * No credentials are read or stored: every export request is made by SIS itself.
+ *   SISSync.start({ appsScriptUrl: 'https://script.google.com/macros/s/.../exec' })  // then poll SISSync.status()
+ *   await SISSync.run({ dryRun: true, only: [1, 9] })                               // test without writing
  */
 (function () {
-  const VERSION = '2026-09-30.7';
+  const VERSION = '2026-09-30.8';
   const SPREADSHEET_ID = '1bQyqKpH7yxafv8Tg3ufVjCOsG8soCrV-PUJc65pCJ28';
   const XLSX_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
   const pad = n => String(n).padStart(2, '0');
   const ym = (y, m) => `${y}-${pad(m)}`;
 
   // ---------------- period logic ----------------
-  // Reference month = month of "yesterday" so a run on the 1st still covers the month just closed.
+  // Reference month = month of "yesterday", so a run on the 1st still covers the month just closed.
   function periods(now = new Date()) {
     const ref = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
     const Y = ref.getFullYear(), M = ref.getMonth() + 1;
     const halfStart = M <= 6 ? 1 : 7;
-    const cycleStart = M % 2 === 1 ? M : M - 1;           // 2-month cycles: Jan-Feb, Mar-Apr, ...
+    const cycleStart = M % 2 === 1 ? M : M - 1;             // 2-month cycles: Jan-Feb, Mar-Apr, ...
     return {
       Y, M,
       YTD: [ym(Y, 1), ym(Y, M)],
       FULL: [ym(Y, 1), ym(Y, 12)],
-      HALF: [ym(Y, halfStart), ym(Y, M)],                  // half year to date (e.g. Jul→Sep)
-      CYCLE: [ym(Y, cycleStart), ym(Y, cycleStart + 1)],   // whole current cycle (e.g. Sep→Oct)
+      HALF: [ym(Y, halfStart), ym(Y, M)],                    // half year to date (e.g. Jul→Sep)
+      CYCLE: [ym(Y, cycleStart), ym(Y, cycleStart + 1)],     // whole current cycle (e.g. Sep→Oct)
       MAT: ym(Y, M)
     };
   }
@@ -53,12 +54,27 @@
   ];
   const MENU = { SalesCompare: 'Report - Sales Compar', SalesMAT: 'Report - Moving Annu' };
 
-  // ---------------- helpers ----------------
-  async function waitFor(fn, timeout = 15000, step = 200) {
-    const t0 = Date.now();
-    while (Date.now() - t0 < timeout) { const v = fn(); if (v) return v; await sleep(step); }
-    throw new Error('Timeout waiting for page element');
+  // mid-month, midday local time → the ISO date always falls in the intended month
+  const monthIso = v => { const [y, m] = v.split('-').map(Number); return new Date(y, m - 1, 15, 12).toISOString(); };
+
+  function overrideFor(job, P) {
+    if (job.range === 'MAT') {
+      return { value: { GROUP_BY: job.groupBy, as_of_date: monthIso(P.MAT) }, label: { as_of_date: `As of Month = ${P.MAT}` } };
+    }
+    const [a, b] = P[job.range];
+    return { value: { GROUP_BY: job.groupBy, date_range: [monthIso(a), monthIso(b)] }, label: { date_range: `Month Range=${a} - ${b}` } };
   }
+
+  // ---------------- event-driven waiting (not throttled in background tabs) ----------------
+  function waitFor(fn, timeout = 20000) {
+    return new Promise((resolve, reject) => {
+      const v0 = fn(); if (v0) return resolve(v0);
+      const obs = new MutationObserver(() => { const v = fn(); if (v) { obs.disconnect(); clearTimeout(t); resolve(v); } });
+      obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
+      const t = setTimeout(() => { obs.disconnect(); const v = fn(); v ? resolve(v) : reject(new Error('Timeout waiting for page element')); }, timeout);
+    });
+  }
+  const nextFrame = () => new Promise(r => setTimeout(r, 50));
 
   function loadXLSX() {
     if (window.XLSX) return Promise.resolve();
@@ -74,203 +90,106 @@
       .find(fi => (fi.querySelector('nz-form-label, label')?.innerText || '').replace(/[*:]/g, '').trim() === label);
   }
 
-  const isOpen = sel => sel.classList.contains('ant-select-open');
-
-  async function closeSelect(sel) {
-    if (!isOpen(sel)) return;
-    sel.querySelector('.ant-select-selector').click();
-    await sleep(300);
-    if (isOpen(sel)) {
-      const inp = sel.querySelector('input');
-      inp && inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
-      await sleep(300);
-    }
-  }
-
-  // close every open select on the page
-  async function hideDropdowns() {
-    for (const s of document.querySelectorAll('nz-select.ant-select-open')) await closeSelect(s);
-  }
-
-  function visibleDropdown() {
-    const all = [...document.querySelectorAll('.ant-select-dropdown')].filter(d => getComputedStyle(d).display !== 'none' && !d.classList.contains('ant-select-dropdown-hidden'));
-    return all[all.length - 1];
-  }
-
-  async function openSelect(sel) {
-    await hideDropdowns();
-    const s = sel.querySelector('.ant-select-selector');
-    s.click();
-    await sleep(400);
-    if (!isOpen(sel)) { s.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); await sleep(400); }
-    if (!isOpen(sel)) throw new Error('Could not open dropdown');
-    return waitFor(visibleDropdown, 5000);
-  }
-
-  function clickOption(dd, text) {
-    const opt = [...dd.querySelectorAll('nz-option-item, .ant-select-item-option')].find(o => o.innerText.trim() === text);
-    if (!opt) throw new Error(`Option not found: ${text}`);
-    opt.click();
-  }
-
-  // ---------------- navigation ----------------
+  // ---------------- navigation & the one form field we still set ----------------
   async function openReport(report) {
     if (location.hash.includes(`/report-param/${report}`) && formItem('Group By')) return;
     const label = MENU[report];
     const find = () => [...document.querySelectorAll('li, a, span')].find(e => e.children.length === 0 && e.innerText && e.innerText.trim().startsWith(label));
-    let link = find();
-    if (!link) {   // expand "Report Viewer" menu
+    if (!find()) {
       const parent = [...document.querySelectorAll('li, div, span')].find(e => e.children.length <= 3 && e.innerText && e.innerText.trim() === 'Report Viewer');
       if (parent) parent.click();
-      link = await waitFor(find, 5000);
     }
-    link.click();
-    await waitFor(() => location.hash.includes(`/report-param/${report}`) && formItem('Group By'), 15000);
-    await sleep(800);
-  }
-
-  // ---------------- form filling ----------------
-  async function setGroupBy(labels) {
-    const sel = formItem('Group By').querySelector('nz-select');
-    const current = () => [...sel.querySelectorAll('.ant-select-selection-item-content')].map(e => e.innerText.trim());
-    if (JSON.stringify(current()) === JSON.stringify(labels)) return;
-    // remove current tags
-    for (let i = 0; i < 10; i++) {
-      const rm = sel.querySelector('.ant-select-selection-item-remove');
-      if (!rm) break;
-      rm.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); rm.click(); await sleep(150);
-    }
-    const dd = await openSelect(sel);
-    for (const l of labels) { clickOption(dd, l); await sleep(200); }
-    await hideDropdowns(); await sleep(200);
-    const got = current();
-    if (JSON.stringify(got) !== JSON.stringify(labels)) throw new Error(`Group By mismatch: ${got.join(', ')}`);
-  }
-
-  // ----- month pickers: click cells in the calendar panel like a person -----
-  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const openPicker = () => document.querySelector('.ant-picker-dropdown:not(.ant-picker-dropdown-hidden)');
-
-  async function closePicker() {
-    if (!openPicker()) return;
-    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();   // blur closes nz pickers
-    await sleep(500);
-  }
-
-  // Open the picker with the START side active (the range picker remembers the last active side)
-  async function ensurePickerOpen(input) {
-    input.focus();
-    input.click();
-    await sleep(500);
-    if (!openPicker()) { input.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); input.focus(); input.click(); await sleep(500); }
-    await waitFor(openPicker, 5000);
-    const dd = openPicker();
-    if (dd.classList.contains('ant-picker-dropdown-range') && !dd.classList.contains('ant-picker-active-left')) {
-      input.focus(); await sleep(400);
-    }
-  }
-
-  async function panelForYear(y) {
-    for (let i = 0; i < 15; i++) {
-      const dd = openPicker();
-      if (!dd) throw new Error('Month picker closed unexpectedly');
-      const panels = [...dd.querySelectorAll('.ant-picker-panel')];
-      const p = panels.find(p => (p.querySelector('.ant-picker-header-view')?.innerText || '').trim() === String(y));
-      if (p) return p;
-      const first = +(panels[0].querySelector('.ant-picker-header-view').innerText.trim());
-      dd.querySelector(first > y ? '.ant-picker-header-super-prev-btn' : '.ant-picker-header-super-next-btn').click();
-      await sleep(250);
-    }
-    throw new Error(`Year ${y} not found in picker`);
-  }
-
-  async function clickMonth(value) {           // value = 'YYYY-MM'
-    const [y, m] = value.split('-').map(Number);
-    const p = await panelForYear(y);
-    const td = [...p.querySelectorAll('td')].find(td => td.innerText.trim() === MONTHS[m - 1]);
-    if (!td) throw new Error(`Month cell ${value} not found`);
-    (td.querySelector('.ant-picker-cell-inner') || td).click();
-    await sleep(400);
-  }
-
-  async function setMonthRange(start, end) {
-    const fi = formItem('Month Range');
-    const a = fi.querySelector('input[placeholder="Start month"]');
-    const b = fi.querySelector('input[placeholder="End month"]');
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      if (a.value === start && b.value === end) break;
-      await closePicker();
-      const clr = fi.querySelector('.ant-picker-clear');
-      if (clr && (a.value || b.value)) {
-        clr.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-        clr.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-        clr.click();
-        await sleep(500);
-        await closePicker();
-      }
-      await ensurePickerOpen(a);
-      await clickMonth(start);
-      await clickMonth(end);
-      await sleep(400);
-    }
-    await closePicker();
-    if (a.value !== start || b.value !== end) throw new Error(`Month range not set (${a.value} → ${b.value})`);
-  }
-
-  async function setMonth(value) {
-    const input = document.querySelector('nz-form-item input[placeholder="Select month"]');
-    if (!input) throw new Error('Month input not found');
-    if (input.value === value) return;
-    await closePicker();
-    await ensurePickerOpen(input);
-    await clickMonth(value);
-    await sleep(300);
-    await closePicker();
-    if (input.value !== value) throw new Error(`Month not set (${input.value})`);
+    (await waitFor(find, 10000)).click();
+    await waitFor(() => location.hash.includes(`/report-param/${report}`) && formItem('Export Type'), 20000);
   }
 
   async function setExportExcel() {
     const sel = formItem('Export Type').querySelector('nz-select');
     if ((sel.innerText || '').includes('EXCEL')) return;
-    const dd = await openSelect(sel);
-    clickOption(dd, 'EXCEL'); await sleep(200); await hideDropdowns();
+    for (let attempt = 0; attempt < 3 && !(sel.innerText || '').includes('EXCEL'); attempt++) {
+      sel.querySelector('.ant-select-selector').click();
+      let opt;
+      try {
+        opt = await waitFor(() => [...document.querySelectorAll('.ant-select-dropdown nz-option-item, .ant-select-dropdown .ant-select-item-option')].find(o => o.innerText.trim() === 'EXCEL'), 5000);
+      } catch (e) { sel.querySelector('.ant-select-selector').dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); continue; }
+      opt.click();
+      await waitFor(() => (sel.innerText || '').includes('EXCEL'), 3000).catch(() => {});
+    }
+    if (!(sel.innerText || '').includes('EXCEL')) throw new Error('Could not set Export Type = EXCEL');
   }
 
-  // ---------------- capture export blob instead of downloading ----------------
-  // The pending resolver lives on window so a re-loaded copy of this script still works.
-  function installCapture() {
-    if (window.__sisSyncCapture) return;
-    window.__sisSyncCapture = true;
-    const origCreate = URL.createObjectURL.bind(URL);
-    URL.createObjectURL = function (obj) {
-      const url = origCreate(obj);
-      const p = window.__sisSyncPending;
-      if (p && obj instanceof Blob && obj.size > 0) { window.__sisSyncPending = null; window.__sisSyncSuppress = url; p(obj); }
-      return url;
-    };
-    const origClick = HTMLAnchorElement.prototype.click;
-    HTMLAnchorElement.prototype.click = function () {
-      if (window.__sisSyncSuppress && this.href === window.__sisSyncSuppress) { window.__sisSyncSuppress = null; return; }
-      return origClick.apply(this, arguments);
-    };
+  // ---------------- hooks: replace report parameters in SIS's export request; catch the file ----------------
+  function installHooks() {
+    if (window.__sisSyncHooks === VERSION) return;
+    window.__sisSyncHooks = VERSION;
+    if (!window.__sisSyncXhrPatched) {
+      window.__sisSyncXhrPatched = true;
+      const origOpen = XMLHttpRequest.prototype.open, origSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.open = function (m, u) { this.__sisUrl = String(u); return origOpen.apply(this, arguments); };
+      XMLHttpRequest.prototype.send = function (body) {
+        const ov = window.__sisSyncOverride;
+        if (ov && this.__sisUrl && this.__sisUrl.includes('ExportToExcel') && typeof body === 'string') {
+          try {
+            const b = JSON.parse(body);
+            Object.assign(b.value, ov.value);
+            if (b.label) Object.assign(b.label, ov.label);
+            delete b.value[ov.value.as_of_date ? 'date_range' : 'as_of_date'];
+            body = JSON.stringify(b);
+            window.__sisSyncOverride = null;
+            window.__sisSyncSent = b.value;
+          } catch (e) { /* leave body unchanged */ }
+        }
+        return origSend.call(this, body);
+      };
+    }
+    if (!window.__sisSyncBlobPatched) {
+      window.__sisSyncBlobPatched = true;
+      const origCreate = URL.createObjectURL.bind(URL);
+      URL.createObjectURL = function (obj) {
+        const url = origCreate(obj);
+        const p = window.__sisSyncPending;
+        if (p && obj instanceof Blob && obj.size > 0) { window.__sisSyncPending = null; window.__sisSyncSuppress = url; p(obj); }
+        return url;
+      };
+      const origClick = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function () {
+        if (window.__sisSyncSuppress && this.href === window.__sisSyncSuppress) { window.__sisSyncSuppress = null; return; }
+        return origClick.apply(this, arguments);
+      };
+    }
   }
 
-  async function exportAndCapture(timeoutMs = 180000) {
+  async function exportWith(override, timeoutMs = 240000) {
+    window.__sisSyncSent = null;
+    window.__sisSyncOverride = override;
     const blobP = new Promise((resolve, reject) => {
       window.__sisSyncPending = resolve;
-      setTimeout(() => { if (window.__sisSyncPending === resolve) { window.__sisSyncPending = null; reject(new Error('Export timed out')); } }, timeoutMs);
+      setTimeout(() => { if (window.__sisSyncPending === resolve) { window.__sisSyncPending = null; window.__sisSyncOverride = null; reject(new Error('Export timed out')); } }, timeoutMs);
     });
     const btn = [...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'Export');
     if (!btn) throw new Error('Export button not found');
     btn.click();
-    return blobP;
+    const blob = await blobP;
+    if (!window.__sisSyncSent) throw new Error('Report parameters were not applied');
+    return blob;
   }
 
-  // ---------------- upload ----------------
+  // ---------------- file → rows → Apps Script ----------------
   async function blobToRows(blob) {
     const wb = XLSX.read(await blob.arrayBuffer(), { type: 'array' });
     if (!wb.SheetNames.includes('DATA')) throw new Error('No "DATA" tab in exported file');
     return XLSX.utils.sheet_to_json(wb.Sheets.DATA, { header: 1, defval: '' });
+  }
+
+  // SalesCompare files carry year1/month1/month2 columns — confirm they match what we asked for
+  function checkPeriod(rows, job, P) {
+    if (job.range === 'MAT' || rows.length < 2) return;
+    const h = rows[0], r = rows[1];
+    const iy = h.indexOf('year1'), i1 = h.indexOf('month1'), i2 = h.indexOf('month2');
+    if (iy < 0 || i1 < 0 || i2 < 0) return;
+    const got = `${r[iy]}-${pad(+r[i1])}→${r[iy]}-${pad(+r[i2])}`;
+    const want = P[job.range].join('→');
+    if (got !== want) throw new Error(`Exported period ${got} ≠ expected ${want}`);
   }
 
   async function postRows(appsScriptUrl, sheetName, data) {
@@ -286,38 +205,46 @@
   }
 
   // ---------------- main ----------------
+  async function runJob(job, P, opts, state) {
+    const res = { id: `D${job.id}`, tab: `Data_uploadD${job.id}`, period: job.range === 'MAT' ? P.MAT : P[job.range].join('→') };
+    const t0 = Date.now();
+    state.current = res.id;
+    try {
+      await openReport(job.report);
+      await setExportExcel();
+      const blob = await exportWith(overrideFor(job, P));
+      const rows = await blobToRows(blob);
+      checkPeriod(rows, job, P);
+      res.rows = rows.length;
+      if (!opts.dryRun) res.written = await postRows(opts.appsScriptUrl, res.tab, rows);
+      res.ok = true;
+    } catch (e) {
+      res.ok = false; res.error = String(e.message || e);
+    }
+    res.seconds = Math.round((Date.now() - t0) / 1000);
+    console.log('[SISSync]', JSON.stringify(res));
+    return res;
+  }
+
   async function run(opts = {}) {
     const { appsScriptUrl, only, dryRun = false, now } = opts;
     if (!appsScriptUrl && !dryRun) throw new Error('appsScriptUrl is required');
     if (location.hash.includes('/login')) throw new Error('NOT_LOGGED_IN: please log in to SIS first');
     await loadXLSX();
-    installCapture();
+    installHooks();
     const P = periods(now ? new Date(now) : new Date());
     const results = [];
     const state = window.__sisSyncState = { running: true, version: VERSION, dryRun, startedAt: new Date().toISOString(), current: null, results };
-    for (const job of JOBS) {
-      if (only && !only.includes(job.id)) continue;
-      const res = { id: `D${job.id}`, tab: `Data_uploadD${job.id}`, period: job.range === 'MAT' ? P.MAT : P[job.range].join('→') };
-      const t0 = Date.now();
-      state.current = res.id;
-      try {
-        await openReport(job.report);
-        await setGroupBy(job.groupBy);
-        if (job.range === 'MAT') await setMonth(P.MAT); else await setMonthRange(...P[job.range]);
-        await setExportExcel();
-        const blob = await exportAndCapture();
-        const rows = await blobToRows(blob);
-        res.rows = rows.length;
-        res.header = rows[0];
-        if (!dryRun) res.written = await postRows(appsScriptUrl, res.tab, rows);
-        res.ok = true;
-      } catch (e) {
-        res.ok = false; res.error = String(e.message || e);
-      }
-      res.seconds = Math.round((Date.now() - t0) / 1000);
-      results.push(res);
-      console.log('[SISSync]', JSON.stringify(res));
-      await sleep(1500);
+    const jobs = JOBS.filter(j => !only || only.includes(j.id));
+    for (const job of jobs) results.push(await runJob(job, P, opts, state));
+    // one retry for anything that failed
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].ok) continue;
+      const job = jobs[i];
+      const again = await runJob(job, P, opts, state);
+      again.retried = true;
+      if (!again.ok) again.error = `${again.error} (first try: ${results[i].error})`;
+      results[i] = again;
     }
     const summary = { version: VERSION, ref: `${P.Y}-${pad(P.M)}`, dryRun, ok: results.filter(r => r.ok).length, total: results.length, results };
     Object.assign(state, { running: false, current: null, finishedAt: new Date().toISOString(), summary });
@@ -325,7 +252,7 @@
     return summary;
   }
 
-  // Fire-and-forget version for tools with a short call timeout; poll SISSync.status()
+  // Fire-and-forget for tools with a short call timeout; poll SISSync.status()
   function start(opts) {
     if (window.__sisSyncState && window.__sisSyncState.running) return 'already running';
     window.__sisSyncState = { running: true, version: VERSION, results: [] };
@@ -337,11 +264,11 @@
     const s = window.__sisSyncState;
     if (!s) return { running: false, note: 'not started' };
     return {
-      running: s.running, current: s.current, fatal: s.fatal,
-      done: (s.results || []).map(r => `${r.id} ${r.ok ? 'OK' : 'FAIL'} ${r.period} rows=${r.rows ?? '-'}${r.written != null ? ' written=' + r.written : ''}${r.error ? ' ERR=' + r.error : ''} (${r.seconds}s)`),
+      running: s.running, current: s.current, fatal: s.fatal, version: s.version,
+      done: (s.results || []).map(r => `${r.id} ${r.ok ? 'OK' : 'FAIL'} ${r.period} rows=${r.rows ?? '-'}${r.written != null ? ' written=' + r.written : ''}${r.retried ? ' (retried)' : ''}${r.error ? ' ERR=' + r.error : ''} (${r.seconds}s)`),
       ok: s.summary ? s.summary.ok : undefined, total: s.summary ? s.summary.total : undefined
     };
   }
 
-  window.SISSync = { run, start, status, periods, JOBS, VERSION, _t: { openReport, setGroupBy, setMonthRange, setMonth, setExportExcel, closePicker, openPicker } };
+  window.SISSync = { run, start, status, periods, JOBS, VERSION };
 })();
