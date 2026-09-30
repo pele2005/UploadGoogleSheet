@@ -14,7 +14,7 @@
  * No credentials are read or stored: every export request is made by SIS itself.
  */
 (function () {
-  const VERSION = '2026-09-30.1';
+  const VERSION = '2026-09-30.2';
   const SPREADSHEET_ID = '1bQyqKpH7yxafv8Tg3ufVjCOsG8soCrV-PUJc65pCJ28';
   const XLSX_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
 
@@ -27,14 +27,14 @@
   function periods(now = new Date()) {
     const ref = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
     const Y = ref.getFullYear(), M = ref.getMonth() + 1;
-    const half = M <= 6 ? [1, 6] : [7, 12];
+    const halfStart = M <= 6 ? 1 : 7;
     const cycleStart = M % 2 === 1 ? M : M - 1;           // 2-month cycles: Jan-Feb, Mar-Apr, ...
     return {
       Y, M,
       YTD: [ym(Y, 1), ym(Y, M)],
       FULL: [ym(Y, 1), ym(Y, 12)],
-      HALF: [ym(Y, half[0]), ym(Y, half[1])],
-      CYCLE: [ym(Y, cycleStart), ym(Y, M)],
+      HALF: [ym(Y, halfStart), ym(Y, M)],                  // half year to date (e.g. Jul→Sep)
+      CYCLE: [ym(Y, cycleStart), ym(Y, cycleStart + 1)],   // whole current cycle (e.g. Sep→Oct)
       MAT: ym(Y, M)
     };
   }
@@ -74,20 +74,36 @@
       .find(fi => (fi.querySelector('nz-form-label, label')?.innerText || '').replace(/[*:]/g, '').trim() === label);
   }
 
-  function hideDropdowns() {
-    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    document.querySelectorAll('.ant-select-dropdown').forEach(d => { d.classList.add('ant-select-dropdown-hidden'); d.style.display = 'none'; });
+  const isOpen = sel => sel.classList.contains('ant-select-open');
+
+  async function closeSelect(sel) {
+    if (!isOpen(sel)) return;
+    sel.querySelector('.ant-select-selector').click();
+    await sleep(300);
+    if (isOpen(sel)) {
+      const inp = sel.querySelector('input');
+      inp && inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+      await sleep(300);
+    }
+  }
+
+  // close every open select on the page
+  async function hideDropdowns() {
+    for (const s of document.querySelectorAll('nz-select.ant-select-open')) await closeSelect(s);
   }
 
   function visibleDropdown() {
-    return [...document.querySelectorAll('.ant-select-dropdown')].find(d => getComputedStyle(d).display !== 'none' && !d.classList.contains('ant-select-dropdown-hidden'));
+    const all = [...document.querySelectorAll('.ant-select-dropdown')].filter(d => getComputedStyle(d).display !== 'none' && !d.classList.contains('ant-select-dropdown-hidden'));
+    return all[all.length - 1];
   }
 
   async function openSelect(sel) {
-    hideDropdowns(); await sleep(150);
+    await hideDropdowns();
     const s = sel.querySelector('.ant-select-selector');
-    s.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     s.click();
+    await sleep(400);
+    if (!isOpen(sel)) { s.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); await sleep(400); }
+    if (!isOpen(sel)) throw new Error('Could not open dropdown');
     return waitFor(visibleDropdown, 5000);
   }
 
@@ -124,36 +140,64 @@
     }
     const dd = await openSelect(sel);
     for (const l of labels) { clickOption(dd, l); await sleep(200); }
-    hideDropdowns(); await sleep(200);
+    await hideDropdowns(); await sleep(200);
     const got = [...sel.querySelectorAll('.ant-select-selection-item-content')].map(e => e.innerText.trim());
     if (JSON.stringify(got) !== JSON.stringify(labels)) throw new Error(`Group By mismatch: ${got.join(', ')}`);
   }
 
-  function setInput(input, value) {
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-    input.focus();
-    setter.call(input, value);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    input.blur();
+  // ----- month pickers: click cells in the calendar panel like a person -----
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const openPicker = () => document.querySelector('.ant-picker-dropdown:not(.ant-picker-dropdown-hidden)');
+
+  async function ensurePickerOpen(input) {
+    if (openPicker()) return;
+    input.click(); await sleep(400);
+    if (!openPicker()) { input.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); input.focus(); input.click(); await sleep(400); }
+    await waitFor(openPicker, 5000);
+  }
+
+  async function panelForYear(y) {
+    for (let i = 0; i < 15; i++) {
+      const dd = openPicker();
+      if (!dd) throw new Error('Month picker closed unexpectedly');
+      const panels = [...dd.querySelectorAll('.ant-picker-panel')];
+      const p = panels.find(p => (p.querySelector('.ant-picker-header-view')?.innerText || '').trim() === String(y));
+      if (p) return p;
+      const first = +(panels[0].querySelector('.ant-picker-header-view').innerText.trim());
+      dd.querySelector(first > y ? '.ant-picker-header-super-prev-btn' : '.ant-picker-header-super-next-btn').click();
+      await sleep(250);
+    }
+    throw new Error(`Year ${y} not found in picker`);
+  }
+
+  async function clickMonth(value) {           // value = 'YYYY-MM'
+    const [y, m] = value.split('-').map(Number);
+    const p = await panelForYear(y);
+    const td = [...p.querySelectorAll('td')].find(td => td.innerText.trim() === MONTHS[m - 1]);
+    if (!td) throw new Error(`Month cell ${value} not found`);
+    (td.querySelector('.ant-picker-cell-inner') || td).click();
+    await sleep(400);
   }
 
   async function setMonthRange(start, end) {
     const fi = formItem('Month Range');
     const a = fi.querySelector('input[placeholder="Start month"]');
     const b = fi.querySelector('input[placeholder="End month"]');
-    setInput(a, start); await sleep(250);
-    setInput(b, end); await sleep(250);
-    hideDropdowns(); await sleep(200);
+    if (a.value === start && b.value === end) return;
+    await ensurePickerOpen(a);
+    await clickMonth(start);
+    await clickMonth(end);
+    await sleep(300);
     if (a.value !== start || b.value !== end) throw new Error(`Month range not set (${a.value} → ${b.value})`);
   }
 
   async function setMonth(value) {
-    const fi = formItem('Month') || formItem('As of Month') || formItem('Select Month');
-    const input = (fi || document).querySelector('input[placeholder="Select month"]');
+    const input = document.querySelector('nz-form-item input[placeholder="Select month"]');
     if (!input) throw new Error('Month input not found');
-    setInput(input, value); await sleep(250); hideDropdowns(); await sleep(200);
+    if (input.value === value) return;
+    await ensurePickerOpen(input);
+    await clickMonth(value);
+    await sleep(300);
     if (input.value !== value) throw new Error(`Month not set (${input.value})`);
   }
 
@@ -161,7 +205,7 @@
     const sel = formItem('Export Type').querySelector('nz-select');
     if ((sel.innerText || '').includes('EXCEL')) return;
     const dd = await openSelect(sel);
-    clickOption(dd, 'EXCEL'); await sleep(200); hideDropdowns();
+    clickOption(dd, 'EXCEL'); await sleep(200); await hideDropdowns();
   }
 
   // ---------------- capture export blob instead of downloading ----------------
