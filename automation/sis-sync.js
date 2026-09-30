@@ -14,7 +14,7 @@
  * No credentials are read or stored: every export request is made by SIS itself.
  */
 (function () {
-  const VERSION = '2026-09-30.6';
+  const VERSION = '2026-09-30.7';
   const SPREADSHEET_ID = '1bQyqKpH7yxafv8Tg3ufVjCOsG8soCrV-PUJc65pCJ28';
   const XLSX_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
 
@@ -153,17 +153,21 @@
 
   async function closePicker() {
     if (!openPicker()) return;
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
-    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    document.body.click();
-    await sleep(400);
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();   // blur closes nz pickers
+    await sleep(500);
   }
 
+  // Open the picker with the START side active (the range picker remembers the last active side)
   async function ensurePickerOpen(input) {
-    if (openPicker()) return;
-    input.click(); await sleep(400);
-    if (!openPicker()) { input.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); input.focus(); input.click(); await sleep(400); }
+    input.focus();
+    input.click();
+    await sleep(500);
+    if (!openPicker()) { input.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); input.focus(); input.click(); await sleep(500); }
     await waitFor(openPicker, 5000);
+    const dd = openPicker();
+    if (dd.classList.contains('ant-picker-dropdown-range') && !dd.classList.contains('ant-picker-active-left')) {
+      input.focus(); await sleep(400);
+    }
   }
 
   async function panelForYear(y) {
@@ -193,21 +197,23 @@
     const fi = formItem('Month Range');
     const a = fi.querySelector('input[placeholder="Start month"]');
     const b = fi.querySelector('input[placeholder="End month"]');
-    if (a.value === start && b.value === end) return;
-    await closePicker();
-    // clear the existing range first — picking over an existing range is unreliable
-    const clr = fi.querySelector('.ant-picker-clear');
-    if (clr && (a.value || b.value)) {
-      clr.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-      clr.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-      clr.click();
-      await sleep(400);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      if (a.value === start && b.value === end) break;
       await closePicker();
+      const clr = fi.querySelector('.ant-picker-clear');
+      if (clr && (a.value || b.value)) {
+        clr.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        clr.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        clr.click();
+        await sleep(500);
+        await closePicker();
+      }
+      await ensurePickerOpen(a);
+      await clickMonth(start);
+      await clickMonth(end);
+      await sleep(400);
     }
-    await ensurePickerOpen(a);
-    await clickMonth(start);
-    await clickMonth(end);
-    await sleep(300);
+    await closePicker();
     if (a.value !== start || b.value !== end) throw new Error(`Month range not set (${a.value} → ${b.value})`);
   }
 
@@ -215,9 +221,11 @@
     const input = document.querySelector('nz-form-item input[placeholder="Select month"]');
     if (!input) throw new Error('Month input not found');
     if (input.value === value) return;
+    await closePicker();
     await ensurePickerOpen(input);
     await clickMonth(value);
     await sleep(300);
+    await closePicker();
     if (input.value !== value) throw new Error(`Month not set (${input.value})`);
   }
 
