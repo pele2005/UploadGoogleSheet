@@ -183,7 +183,25 @@
         const s = document.getElementById('url-status');
         if (!v) s.innerHTML = '<span class="text-yellow-400">ยังไม่ได้ใส่ URL</span>';
         else if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(v)) s.innerHTML = '<span class="text-yellow-400">รูปแบบ URL อาจไม่ถูกต้อง</span>';
-        else s.innerHTML = '<span class="text-green-400">✓ พร้อมใช้งาน</span>';
+        else {
+            s.innerHTML = '<span class="text-green-400">✓ รูปแบบถูกต้อง</span>';
+            checkUrlHealth(v);
+        }
+    }
+
+    // Ask the Apps Script which account it runs as (newer script has doGet health check)
+    let healthTimer = null;
+    function checkUrlHealth(url) {
+        clearTimeout(healthTimer);
+        healthTimer = setTimeout(async () => {
+            const s = document.getElementById('url-status');
+            try {
+                const r = await fetch(url, { method: 'GET', redirect: 'follow' });
+                const j = JSON.parse(await r.text());
+                if (document.getElementById('appsScriptUrl').value.trim() !== url) return;
+                if (j.status === 'ok') s.innerHTML = `<span class="text-green-400">✓ เชื่อมต่อแล้ว · ${escapeHtml(j.account || '')}</span>`;
+            } catch (e) { /* older script without doGet: keep format-only status */ }
+        }, 600);
     }
 
     function renderLast(id) {
