@@ -17,7 +17,7 @@
  *   await SISSync.run({ dryRun: true, only: [1, 9] })                               // test without writing
  */
 (function () {
-  const VERSION = '2026-09-30.8';
+  const VERSION = '2026-09-30.9';
   const SPREADSHEET_ID = '1bQyqKpH7yxafv8Tg3ufVjCOsG8soCrV-PUJc65pCJ28';
   const XLSX_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
   const pad = n => String(n).padStart(2, '0');
@@ -53,6 +53,7 @@
     { id: 9, report: 'SalesMAT',     range: 'MAT',   groupBy: ['SM', 'Rep', 'Product Brand', 'Product Item', 'Customer'] }
   ];
   const MENU = { SalesCompare: 'Report - Sales Compar', SalesMAT: 'Report - Moving Annu' };
+  const PERIOD_FIELD = { SalesCompare: 'Month Range', SalesMAT: 'As of Month' };   // proves the right form is on screen
 
   // mid-month, midday local time → the ISO date always falls in the intended month
   const monthIso = v => { const [y, m] = v.split('-').map(Number); return new Date(y, m - 1, 15, 12).toISOString(); };
@@ -92,7 +93,8 @@
 
   // ---------------- navigation & the one form field we still set ----------------
   async function openReport(report) {
-    if (location.hash.includes(`/report-param/${report}`) && formItem('Group By')) return;
+    const ready = () => location.hash.includes(`/report-param/${report}`) && formItem(PERIOD_FIELD[report]) && formItem('Export Type');
+    if (ready()) return;
     const label = MENU[report];
     const find = () => [...document.querySelectorAll('li, a, span')].find(e => e.children.length === 0 && e.innerText && e.innerText.trim().startsWith(label));
     if (!find()) {
@@ -100,12 +102,11 @@
       if (parent) parent.click();
     }
     (await waitFor(find, 10000)).click();
-    await waitFor(() => location.hash.includes(`/report-param/${report}`) && formItem('Export Type'), 20000);
+    await waitFor(ready, 20000);
   }
 
   async function setExportExcel() {
     const sel = formItem('Export Type').querySelector('nz-select');
-    if ((sel.innerText || '').includes('EXCEL')) return;
     for (let attempt = 0; attempt < 3 && !(sel.innerText || '').includes('EXCEL'); attempt++) {
       sel.querySelector('.ant-select-selector').click();
       let opt;
@@ -169,9 +170,18 @@
     const btn = [...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'Export');
     if (!btn) throw new Error('Export button not found');
     btn.click();
-    const blob = await blobP;
-    if (!window.__sisSyncSent) throw new Error('Report parameters were not applied');
-    return blob;
+    // SIS sends nothing if its form is invalid — fail fast instead of waiting for the full timeout
+    const sent = await new Promise(res => {
+      const t0 = Date.now();
+      const tick = () => { if (window.__sisSyncSent) return res(true); if (Date.now() - t0 > 15000) return res(false); setTimeout(tick, 250); };
+      tick();
+    });
+    if (!sent) {
+      window.__sisSyncPending = null; window.__sisSyncOverride = null;
+      const bad = [...document.querySelectorAll('.ant-form-item-has-error nz-form-label, .ant-form-item-has-error label')].map(e => e.innerText.trim()).join(', ');
+      throw new Error('SIS did not send the export request' + (bad ? ` (form errors: ${bad})` : ''));
+    }
+    return blobP;
   }
 
   // ---------------- file → rows → Apps Script ----------------
