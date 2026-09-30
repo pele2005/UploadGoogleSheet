@@ -14,7 +14,7 @@
  * No credentials are read or stored: every export request is made by SIS itself.
  */
 (function () {
-  const VERSION = '2026-09-30.2';
+  const VERSION = '2026-09-30.3';
   const SPREADSHEET_ID = '1bQyqKpH7yxafv8Tg3ufVjCOsG8soCrV-PUJc65pCJ28';
   const XLSX_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
 
@@ -132,6 +132,8 @@
   // ---------------- form filling ----------------
   async function setGroupBy(labels) {
     const sel = formItem('Group By').querySelector('nz-select');
+    const current = () => [...sel.querySelectorAll('.ant-select-selection-item-content')].map(e => e.innerText.trim());
+    if (JSON.stringify(current()) === JSON.stringify(labels)) return;
     // remove current tags
     for (let i = 0; i < 10; i++) {
       const rm = sel.querySelector('.ant-select-selection-item-remove');
@@ -141,7 +143,7 @@
     const dd = await openSelect(sel);
     for (const l of labels) { clickOption(dd, l); await sleep(200); }
     await hideDropdowns(); await sleep(200);
-    const got = [...sel.querySelectorAll('.ant-select-selection-item-content')].map(e => e.innerText.trim());
+    const got = current();
     if (JSON.stringify(got) !== JSON.stringify(labels)) throw new Error(`Group By mismatch: ${got.join(', ')}`);
   }
 
@@ -265,10 +267,12 @@
     installCapture();
     const P = periods(now ? new Date(now) : new Date());
     const results = [];
+    const state = window.__sisSyncState = { running: true, version: VERSION, dryRun, startedAt: new Date().toISOString(), current: null, results };
     for (const job of JOBS) {
       if (only && !only.includes(job.id)) continue;
       const res = { id: `D${job.id}`, tab: `Data_uploadD${job.id}`, period: job.range === 'MAT' ? P.MAT : P[job.range].join('→') };
       const t0 = Date.now();
+      state.current = res.id;
       try {
         await openReport(job.report);
         await setGroupBy(job.groupBy);
@@ -289,9 +293,28 @@
       await sleep(1500);
     }
     const summary = { version: VERSION, ref: `${P.Y}-${pad(P.M)}`, dryRun, ok: results.filter(r => r.ok).length, total: results.length, results };
+    Object.assign(state, { running: false, current: null, finishedAt: new Date().toISOString(), summary });
     window.__sisSyncLast = summary;
     return summary;
   }
 
-  window.SISSync = { run, periods, JOBS, VERSION };
+  // Fire-and-forget version for tools with a short call timeout; poll SISSync.status()
+  function start(opts) {
+    if (window.__sisSyncState && window.__sisSyncState.running) return 'already running';
+    window.__sisSyncState = { running: true, version: VERSION, results: [] };
+    run(opts).catch(e => Object.assign(window.__sisSyncState, { running: false, fatal: String(e.message || e) }));
+    return 'started';
+  }
+
+  function status() {
+    const s = window.__sisSyncState;
+    if (!s) return { running: false, note: 'not started' };
+    return {
+      running: s.running, current: s.current, fatal: s.fatal,
+      done: (s.results || []).map(r => `${r.id} ${r.ok ? 'OK' : 'FAIL'} ${r.period} rows=${r.rows ?? '-'}${r.written != null ? ' written=' + r.written : ''}${r.error ? ' ERR=' + r.error : ''} (${r.seconds}s)`),
+      ok: s.summary ? s.summary.ok : undefined, total: s.summary ? s.summary.total : undefined
+    };
+  }
+
+  window.SISSync = { run, start, status, periods, JOBS, VERSION };
 })();
