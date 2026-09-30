@@ -14,7 +14,7 @@
  * No credentials are read or stored: every export request is made by SIS itself.
  */
 (function () {
-  const VERSION = '2026-09-30.3';
+  const VERSION = '2026-09-30.4';
   const SPREADSHEET_ID = '1bQyqKpH7yxafv8Tg3ufVjCOsG8soCrV-PUJc65pCJ28';
   const XLSX_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
 
@@ -211,14 +211,15 @@
   }
 
   // ---------------- capture export blob instead of downloading ----------------
-  let pending = null;
+  // The pending resolver lives on window so a re-loaded copy of this script still works.
   function installCapture() {
     if (window.__sisSyncCapture) return;
     window.__sisSyncCapture = true;
     const origCreate = URL.createObjectURL.bind(URL);
     URL.createObjectURL = function (obj) {
       const url = origCreate(obj);
-      if (pending && obj instanceof Blob && obj.size > 0) { pending.resolve(obj); pending = null; window.__sisSyncSuppress = url; }
+      const p = window.__sisSyncPending;
+      if (p && obj instanceof Blob && obj.size > 0) { window.__sisSyncPending = null; window.__sisSyncSuppress = url; p(obj); }
       return url;
     };
     const origClick = HTMLAnchorElement.prototype.click;
@@ -230,8 +231,8 @@
 
   async function exportAndCapture(timeoutMs = 180000) {
     const blobP = new Promise((resolve, reject) => {
-      pending = { resolve };
-      setTimeout(() => { if (pending) { pending = null; reject(new Error('Export timed out')); } }, timeoutMs);
+      window.__sisSyncPending = resolve;
+      setTimeout(() => { if (window.__sisSyncPending === resolve) { window.__sisSyncPending = null; reject(new Error('Export timed out')); } }, timeoutMs);
     });
     const btn = [...document.querySelectorAll('button')].find(b => b.innerText.trim() === 'Export');
     if (!btn) throw new Error('Export button not found');
