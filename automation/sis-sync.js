@@ -17,7 +17,7 @@
  *   await SISSync.run({ dryRun: true, only: [1, 9] })                               // test without writing
  */
 (function () {
-  const VERSION = '2026-09-30.9';
+  const VERSION = '2026-09-30.10';
   const SPREADSHEET_ID = '1bQyqKpH7yxafv8Tg3ufVjCOsG8soCrV-PUJc65pCJ28';
   const XLSX_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
   const pad = n => String(n).padStart(2, '0');
@@ -280,5 +280,45 @@
     };
   }
 
-  window.SISSync = { run, start, status, periods, JOBS, VERSION };
+
+  // ---------------- on-page progress panel (used by the bookmark button) ----------------
+  function startWithPanel(opts) {
+    const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    let box = document.getElementById('sis-sync-panel');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'sis-sync-panel';
+      box.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;width:380px;max-width:calc(100vw - 32px);background:#111827;color:#f3f4f6;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.35);font:13px/1.45 system-ui,sans-serif;padding:14px 16px';
+      document.body.appendChild(box);
+    }
+    if (location.hash.includes('/login')) {
+      box.innerHTML = '<b style="color:#f87171">กรุณา login SIS ก่อน แล้วกดปุ่มอีกครั้ง</b>';
+      setTimeout(() => box.remove(), 6000);
+      return 'not logged in';
+    }
+    const started = start(opts);
+    const render = () => {
+      const st = status();
+      const byId = {};
+      (window.__sisSyncState?.results || []).forEach(r => { byId[r.id] = r; });
+      const rows = JOBS.map(j => {
+        const id = 'D' + j.id, r = byId[id];
+        const icon = r ? (r.ok ? '✅' : '❌') : (st.current === id ? '⏳' : '·');
+        const info = r ? (r.ok ? `${r.written ?? r.rows} แถว` : esc(r.error || '')) : (st.current === id ? 'กำลังดึงข้อมูล…' : '');
+        return `<div style="display:flex;gap:8px;padding:2px 0"><span style="width:18px">${icon}</span><b style="width:28px">${id}</b><span style="color:${r && !r.ok ? '#fca5a5' : '#9ca3af'};flex:1;word-break:break-word">${info}</span></div>`;
+      }).join('');
+      const head = st.running
+        ? '<b>กำลังอัพเดท Google Sheet…</b> <span style="color:#9ca3af">(ประมาณ 2 นาที อย่าปิดแท็บนี้)</span>'
+        : (st.fatal ? `<b style="color:#f87171">หยุดทำงาน: ${esc(st.fatal)}</b>`
+          : `<b style="color:${st.ok === st.total ? '#4ade80' : '#fbbf24'}">เสร็จแล้ว: สำเร็จ ${st.ok}/${st.total}</b>`);
+      box.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-weight:700;color:#60a5fa">Sales Dashboard Sync</span><button id="sis-sync-x" style="background:none;border:0;color:#9ca3af;font-size:18px;cursor:pointer">×</button></div><div style="margin-bottom:8px">${head}</div>${rows}`;
+      box.querySelector('#sis-sync-x').onclick = () => { clearInterval(timer); box.remove(); };
+      if (!st.running) clearInterval(timer);
+    };
+    const timer = setInterval(render, 1000);
+    render();
+    return started;
+  }
+
+  window.SISSync = { run, start, startWithPanel, status, periods, JOBS, VERSION };
 })();
