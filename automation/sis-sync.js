@@ -14,7 +14,7 @@
  * No credentials are read or stored: every export request is made by SIS itself.
  */
 (function () {
-  const VERSION = '2026-09-30.4';
+  const VERSION = '2026-09-30.5';
   const SPREADSHEET_ID = '1bQyqKpH7yxafv8Tg3ufVjCOsG8soCrV-PUJc65pCJ28';
   const XLSX_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
 
@@ -151,6 +151,14 @@
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const openPicker = () => document.querySelector('.ant-picker-dropdown:not(.ant-picker-dropdown-hidden)');
 
+  async function closePicker() {
+    if (!openPicker()) return;
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    document.body.click();
+    await sleep(400);
+  }
+
   async function ensurePickerOpen(input) {
     if (openPicker()) return;
     input.click(); await sleep(400);
@@ -186,6 +194,16 @@
     const a = fi.querySelector('input[placeholder="Start month"]');
     const b = fi.querySelector('input[placeholder="End month"]');
     if (a.value === start && b.value === end) return;
+    await closePicker();
+    // clear the existing range first — picking over an existing range is unreliable
+    const clr = fi.querySelector('.ant-picker-clear');
+    if (clr && (a.value || b.value)) {
+      clr.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      clr.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      clr.click();
+      await sleep(400);
+      await closePicker();
+    }
     await ensurePickerOpen(a);
     await clickMonth(start);
     await clickMonth(end);
