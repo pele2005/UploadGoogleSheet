@@ -259,7 +259,7 @@ function syncDsd_(token, opts) {
       const inv = String(r[3]);
       const m = inv.match(/^(\d{4})-(\d{2})-(\d{2})/);
       out.push([
-        m ? new Date(+m[1], +m[2] - 1, +m[3]) : '',
+        m ? `${m[1]}-${m[2]}-${m[3]}` : '',            // text date: the sheet turns it into a date in ITS OWN time zone (no day shift)
         String(r[0]).replace(/^Area\s+/, ''),
         r[1], r[2], inv,
         num(r[iQ]), num(r[iA]), num(r[iF]), num(r[iF2]), num(r[iB])
@@ -275,7 +275,7 @@ function syncDsd_(token, opts) {
       sh.getRange(2, 1, out.length - 1, 1).setNumberFormat('yyyy-mm-dd');
       const log = ss.getSheetByName('UPLOAD_LOG') || ss.insertSheet('UPLOAD_LOG');
       if (log.getLastRow() === 0) log.appendRow(['ผู้อัพโหลด', 'ไฟล์', 'จำนวนรายการ', 'เวลา', 'สถานะ']);
-      log.appendRow([AUTO_NAME, `SalesActual ${ymd_(start)}→${ymd_(end)}`, res.rows, new Date(), 'Success']);
+      log.appendRow([AUTO_NAME, `SalesActual ${ymd_(start)}→${ymd_(end)}`, res.rows, Utilities.formatDate(new Date(), 'Asia/Bangkok', 'dd/MM/yyyy HH:mm'), 'Success']);
       SpreadsheetApp.flush();
     }
     res.ok = true;
