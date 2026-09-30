@@ -14,7 +14,7 @@
  * No credentials are read or stored: every export request is made by SIS itself.
  */
 (function () {
-  const VERSION = '2026-09-30.5';
+  const VERSION = '2026-09-30.6';
   const SPREADSHEET_ID = '1bQyqKpH7yxafv8Tg3ufVjCOsG8soCrV-PUJc65pCJ28';
   const XLSX_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
 
@@ -335,5 +335,5 @@
     };
   }
 
-  window.SISSync = { run, start, status, periods, JOBS, VERSION };
+  window.SISSync = { run, start, status, periods, JOBS, VERSION, _t: { openReport, setGroupBy, setMonthRange, setMonth, setExportExcel, closePicker, openPicker } };
 })();
