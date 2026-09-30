@@ -3,268 +3,386 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DashboardSales July 2025 - Uploader</title>
+    <title>Sales Dashboard Uploader</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
-        body {
-            font-family: 'Sarabun', sans-serif;
-        }
+        body { font-family: 'Sarabun', sans-serif; }
         .drop-zone {
             border: 2px dashed #4a5568;
             border-radius: 0.5rem;
-            transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+            transition: background-color .2s ease-in-out, border-color .2s ease-in-out;
         }
-        .drop-zone.dragover {
-            background-color: #2d3748;
-            border-color: #63b3ed;
-        }
+        .drop-zone.dragover { background-color: #1e3a5f; border-color: #63b3ed; }
         .loader {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #3498db;
-            border-radius: 50%;
-            width: 24px;
-            height: 24px;
-            animation: spin 1s linear infinite;
+            border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%;
+            width: 24px; height: 24px; animation: spin 1s linear infinite;
         }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .card.state-success { border-color: #22c55e; }
+        .card.state-error   { border-color: #ef4444; }
+        .card.state-busy    { border-color: #facc15; }
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen p-4 sm:p-6 lg:p-8">
-    <div class="max-w-7xl mx-auto">
-        <header class="text-center mb-8">
-            <h1 class="text-3xl sm:text-4xl font-bold text-blue-400">DashboardSales July 2025 Uploader</h1>
-            <p class="text-gray-400 mt-2">อัพโหลดไฟล์ Excel (.xlsx) เพื่ออัพเดทข้อมูลใน Google Sheet</p>
-        </header>
+<div class="max-w-7xl mx-auto">
 
-        <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
-            <label for="appsScriptUrl" class="block text-lg font-semibold mb-2 text-gray-200">1. วาง Google Apps Script Web App URL ที่นี่:</label>
-            <input type="url" id="appsScriptUrl" placeholder="https://script.google.com/macros/s/.../exec" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <p class="text-sm text-gray-500 mt-2">คุณต้อง Deploy Google Apps Script ก่อนเพื่อรับ URL นี้ (URL จะถูกบันทึกไว้ในเบราว์เซอร์ของคุณโดยอัตโนมัติ)</p>
+    <!-- Header -->
+    <header class="mb-6 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+        <div>
+            <h1 class="text-3xl sm:text-4xl font-bold text-blue-400">Sales Dashboard Uploader</h1>
+            <p class="text-gray-400 mt-1">อัพโหลดไฟล์ Excel (.xlsx) ที่ export จาก SIS เพื่ออัพเดทข้อมูลใน Google Sheet → Looker Studio</p>
         </div>
+        <div class="bg-gray-800 rounded-lg px-4 py-3 min-w-[220px]">
+            <div class="flex justify-between text-sm text-gray-300 mb-1">
+                <span>อัพโหลดสำเร็จวันนี้</span>
+                <span id="progress-text" class="font-bold text-white">0 / 9</span>
+            </div>
+            <div class="w-full bg-gray-700 rounded-full h-2">
+                <div id="progress-bar" class="bg-green-500 h-2 rounded-full transition-all" style="width:0%"></div>
+            </div>
+        </div>
+    </header>
 
-        <main id="uploader-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <!-- Uploaders will be dynamically generated here -->
-        </main>
-    </div>
+    <!-- Step 1: Apps Script URL -->
+    <section class="bg-gray-800 p-5 rounded-lg shadow-lg mb-6">
+        <div class="flex items-center justify-between gap-2 mb-2">
+            <label for="appsScriptUrl" class="text-lg font-semibold text-gray-200">
+                <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-600 text-white text-sm mr-2">1</span>
+                Google Apps Script Web App URL
+            </label>
+            <span id="url-status" class="text-sm"></span>
+        </div>
+        <input type="url" id="appsScriptUrl" placeholder="https://script.google.com/macros/s/.../exec"
+               class="w-full p-3 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <p class="text-sm text-gray-500 mt-2">URL จะถูกบันทึกไว้ในเบราว์เซอร์นี้โดยอัตโนมัติ (ต้องลงท้ายด้วย <span class="font-mono">/exec</span>)</p>
+    </section>
 
-    <script>
-        const SPREADSHEET_ID = '1bQyqKpH7yxafv8Tg3ufVjCOsG8soCrV-PUJc65pCJ28';
+    <!-- Step 2: Bulk upload -->
+    <section class="bg-gray-800 p-5 rounded-lg shadow-lg mb-6">
+        <h2 class="text-lg font-semibold text-gray-200 mb-1">
+            <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-600 text-white text-sm mr-2">2</span>
+            อัพโหลดทีเดียวทุกไฟล์ (แนะนำ)
+        </h2>
+        <p class="text-sm text-gray-400 mb-3">
+            ลากไฟล์ทั้งหมดมาวางพร้อมกัน ระบบจะจับคู่กล่องให้อัตโนมัติจากชื่อไฟล์
+            <span class="font-mono text-blue-300">UpD1_…</span> ถึง <span class="font-mono text-blue-300">UpD9_…</span>
+            แล้วอัพโหลดทีละไฟล์ตามลำดับ
+        </p>
+        <div id="bulk-drop" class="drop-zone p-6 text-center cursor-pointer">
+            <input type="file" id="bulk-input" class="hidden" accept=".xlsx" multiple>
+            <p class="text-gray-300">ลากไฟล์ <span class="font-mono">UpD*.xlsx</span> ทั้งหมดมาวางที่นี่</p>
+            <p class="text-gray-500 my-2">หรือ</p>
+            <button type="button" id="bulk-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition-colors">
+                เลือกหลายไฟล์
+            </button>
+        </div>
+        <div id="bulk-log" class="mt-3 text-sm font-mono space-y-1"></div>
+    </section>
 
-        const uploaders = [
-            { id: 1, title: "Sales compare Line-Brand-Channel-Group-Item", targetTab: "Data_uploadD1" },
-            { id: 2, title: "Sales compare Brand-NSM-SM-Rep-Customer", targetTab: "Data_uploadD2" },
-            { id: 3, title: "Sales compare Line-Brand-Rep-Customer Group-Customer", targetTab: "Data_uploadD3" },
-            { id: 4, title: "Sales compare Brand-Group- NSM-SM-Rep (Full Year)", targetTab: "Data_uploadD4" },
-            { id: 5, title: "Sales compare Brand-Group- NSM-SM-Rep (Half year to date)", targetTab: "Data_uploadD5" },
-            { id: 6, title: "Sales compare Brand-Group- NSM-SM-Rep (Cycle to Date)", targetTab: "Data_uploadD6" },
-            { id: 7, title: "Sales compare NSM-Brand-Item-Month (Jan-Dec)", targetTab: "Data_uploadD7" },
-            { id: 8, title: "Sales compare SM-Rep-Brand-Item-Month (Jan-Dec)", targetTab: "Data_uploadD8" },
-            { id: 9, title: "MAT SM-Rep-Brand-Item-Customer", targetTab: "Data_uploadD9" }
-        ];
+    <!-- Step 3: Individual boxes -->
+    <h2 class="text-lg font-semibold text-gray-200 mb-3">
+        <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-600 text-white text-sm mr-2">3</span>
+        หรืออัพโหลดทีละกล่อง
+    </h2>
+    <main id="uploader-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></main>
 
-        document.addEventListener('DOMContentLoaded', () => {
-            const container = document.getElementById('uploader-container');
-            const appsScriptUrlInput = document.getElementById('appsScriptUrl');
+    <footer class="text-center text-gray-600 text-xs mt-10">
+        ไฟล์ต้องมีแท็บชื่อ <span class="font-mono">DATA</span> · ชื่อไฟล์ตามรูปแบบ <span class="font-mono">UpDX_ddMMYYYY.xlsx</span>
+    </footer>
+</div>
 
-            const savedUrl = localStorage.getItem('appsScriptUrl');
-            if (savedUrl) {
-                appsScriptUrlInput.value = savedUrl;
-            }
+<script>
+    const SPREADSHEET_ID = '1bQyqKpH7yxafv8Tg3ufVjCOsG8soCrV-PUJc65pCJ28';
 
-            appsScriptUrlInput.addEventListener('input', (e) => {
-                localStorage.setItem('appsScriptUrl', e.target.value.trim());
-            });
+    // Display order: D1, D3, D2, D4 … D9 (matches SIS export order)
+    // "id" is the data slot (UpDX / Data_uploadDX) and must never change.
+    const uploaders = [
+        { id: 1, report: "Sales Compare", period: "YTD",
+          title: "Sales compare Product Line-Product Brand-Channel-Product Group-Product Item (YTD)", targetTab: "Data_uploadD1" },
+        { id: 3, report: "Sales Compare", period: "YTD",
+          title: "Sales compare Product Line-Product Brand-Rep-Customer group-Customer (YTD)", targetTab: "Data_uploadD3" },
+        { id: 2, report: "Sales Compare", period: "YTD",
+          title: "Sales compare Product Brand-NSM-SM-Rep-Customer", targetTab: "Data_uploadD2" },
+        { id: 4, report: "Sales Compare", period: "Jan-Dec",
+          title: "Sales compare Product Brand-Product Group-NSM-SM-Rep (Jan-Dec)", targetTab: "Data_uploadD4" },
+        { id: 5, report: "Sales Compare", period: "Half year to date",
+          title: "Sales compare Product Brand-Product Group-NSM-SM-Rep (Half year to date)", targetTab: "Data_uploadD5" },
+        { id: 6, report: "Sales Compare", period: "Cycle to date",
+          title: "Sales compare Product Brand-Product Group-NSM-SM-Rep (Cycle to Date)", targetTab: "Data_uploadD6" },
+        { id: 7, report: "Sales Compare", period: "Jan-Dec",
+          title: "Sales compare NSM-Product Brand-Product Item-Month (Jan-Dec)", targetTab: "Data_uploadD7" },
+        { id: 8, report: "Sales Compare", period: "Jan-Dec",
+          title: "Sales compare SM-Rep-Product Brand-Product Item-Month (Jan-Dec)", targetTab: "Data_uploadD8" },
+        { id: 9, report: "Moving Annual Total", period: "Current month",
+          title: "MAT SM-Rep-Product Brand-Product Item-Customer", targetTab: "Data_uploadD9" }
+    ];
 
-            uploaders.forEach(uploader => {
-                const uploaderEl = document.createElement('div');
-                uploaderEl.className = 'bg-gray-800 p-6 rounded-lg shadow-lg flex flex-col';
-                uploaderEl.innerHTML = `
-                    <div class="flex-grow">
-                        <h2 class="text-xl font-bold text-gray-100 mb-1">${uploader.title}</h2>
-                        <p class="text-sm font-semibold text-blue-400 mb-4">Google Sheet Tab: <span class="font-mono">${uploader.targetTab}</span></p>
-                        <div id="drop-zone-${uploader.id}" class="drop-zone p-8 text-center cursor-pointer">
-                            <input type="file" id="file-input-${uploader.id}" class="hidden" accept=".xlsx">
-                            <p class="text-gray-400">ลากไฟล์ .xlsx มาวางที่นี่</p>
-                            <p class="text-gray-500 my-2">หรือ</p>
-                            <button type="button" onclick="document.getElementById('file-input-${uploader.id}').click()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition-colors">
-                                เลือกไฟล์
-                            </button>
+    // ---------- small storage helpers (per-browser convenience only) ----------
+    const store = {
+        get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+        set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+    };
+    const todayKey = () => new Date().toISOString().slice(0, 10);
+    const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    // Extract slot number from a filename like "UpD3_30092026.xlsx" -> 3
+    function slotFromFileName(name) {
+        const m = /^UpD(\d)[_\-\s.]/i.exec(name);
+        return m ? parseInt(m[1], 10) : null;
+    }
+
+    // ---------- build UI ----------
+    document.addEventListener('DOMContentLoaded', () => {
+        const container = document.getElementById('uploader-container');
+        const urlInput = document.getElementById('appsScriptUrl');
+
+        urlInput.value = store.get('appsScriptUrl') || '';
+        updateUrlStatus();
+        urlInput.addEventListener('input', e => { store.set('appsScriptUrl', e.target.value.trim()); updateUrlStatus(); });
+
+        uploaders.forEach((u, idx) => {
+            const el = document.createElement('div');
+            el.id = `card-${u.id}`;
+            el.className = 'card bg-gray-800 p-5 rounded-lg shadow-lg flex flex-col border-2 border-transparent';
+            el.innerHTML = `
+                <div class="flex items-start gap-3 mb-3">
+                    <div class="shrink-0 text-center">
+                        <div class="bg-blue-600 text-white font-bold rounded-md px-2 py-1 text-lg leading-none">D${u.id}</div>
+                        <div class="text-[11px] text-gray-500 mt-1">กล่อง ${idx + 1}</div>
+                    </div>
+                    <div class="min-w-0">
+                        <h3 class="text-base font-bold text-gray-100 leading-snug break-words">${escapeHtml(u.title)}</h3>
+                        <div class="flex flex-wrap gap-1 mt-2 text-xs">
+                            <span class="bg-gray-700 text-gray-200 rounded px-2 py-0.5">${u.report}</span>
+                            <span class="bg-indigo-900 text-indigo-200 rounded px-2 py-0.5">${u.period}</span>
                         </div>
                     </div>
-                    <div id="log-${uploader.id}" class="mt-4 p-3 bg-gray-900 rounded-md h-28 overflow-y-auto text-sm font-mono">
-                        <p class="text-gray-500">รอการอัพโหลด...</p>
-                    </div>
-                `;
-                container.appendChild(uploaderEl);
-            });
-            
-            uploaders.forEach(uploader => {
-                setupEventListenersForUploader(uploader.id);
-            });
+                </div>
+                <dl class="text-xs text-gray-400 grid grid-cols-[auto,1fr] gap-x-2 gap-y-0.5 mb-3">
+                    <dt>ไฟล์:</dt><dd class="font-mono text-blue-300">UpD${u.id}_ddMMYYYY.xlsx</dd>
+                    <dt>แท็บ:</dt><dd class="font-mono text-blue-300">${u.targetTab}</dd>
+                    <dt>ล่าสุด:</dt><dd id="last-${u.id}" class="text-gray-300">—</dd>
+                </dl>
+                <div id="drop-zone-${u.id}" class="drop-zone p-5 text-center cursor-pointer flex-grow flex flex-col justify-center"></div>
+                <div id="log-${u.id}" class="mt-3 p-3 bg-gray-900 rounded-md h-24 overflow-y-auto text-xs font-mono">
+                    <p class="text-gray-500">รอการอัพโหลด...</p>
+                </div>`;
+            container.appendChild(el);
+            resetDropZone(u.id);
+            setupDropZone(u.id);
+            renderLast(u.id);
         });
+        updateProgress();
+        setupBulk();
+    });
 
-        function setupEventListenersForUploader(uploaderId) {
-            const dropZone = document.getElementById(`drop-zone-${uploaderId}`);
-            const fileInput = document.getElementById(`file-input-${uploaderId}`);
-            
-            if (!dropZone || !fileInput) return;
+    function updateUrlStatus() {
+        const v = document.getElementById('appsScriptUrl').value.trim();
+        const s = document.getElementById('url-status');
+        if (!v) s.innerHTML = '<span class="text-yellow-400">ยังไม่ได้ใส่ URL</span>';
+        else if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(v)) s.innerHTML = '<span class="text-yellow-400">รูปแบบ URL อาจไม่ถูกต้อง</span>';
+        else s.innerHTML = '<span class="text-green-400">✓ พร้อมใช้งาน</span>';
+    }
 
-            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                dropZone.addEventListener(eventName, preventDefaults, false);
+    function renderLast(id) {
+        const raw = store.get(`last-${id}`);
+        const el = document.getElementById(`last-${id}`);
+        if (!raw) return;
+        try {
+            const d = JSON.parse(raw);
+            const isToday = d.day === todayKey();
+            el.innerHTML = `<span class="${isToday ? 'text-green-400' : 'text-gray-300'}">${isToday ? '✓ วันนี้' : d.day} ${d.time}</span> · ${escapeHtml(d.file)} · ${d.rows} แถว`;
+            if (isToday) setCardState(id, 'success');
+        } catch (e) {}
+    }
+
+    function updateProgress() {
+        let n = 0;
+        uploaders.forEach(u => {
+            try { const d = JSON.parse(store.get(`last-${u.id}`) || 'null'); if (d && d.day === todayKey()) n++; } catch (e) {}
+        });
+        document.getElementById('progress-text').textContent = `${n} / ${uploaders.length}`;
+        document.getElementById('progress-bar').style.width = `${Math.round(n / uploaders.length * 100)}%`;
+    }
+
+    function setCardState(id, state) {
+        const card = document.getElementById(`card-${id}`);
+        card.classList.remove('state-success', 'state-error', 'state-busy');
+        if (state) card.classList.add(`state-${state}`);
+    }
+
+    // ---------- per-box drop zones ----------
+    function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
+
+    function wireDrop(zone, onFiles) {
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(ev => zone.addEventListener(ev, preventDefaults, false));
+        ['dragenter', 'dragover'].forEach(ev => zone.addEventListener(ev, () => zone.classList.add('dragover'), false));
+        ['dragleave', 'drop'].forEach(ev => zone.addEventListener(ev, () => zone.classList.remove('dragover'), false));
+        zone.addEventListener('drop', e => { if (e.dataTransfer.files.length) onFiles(e.dataTransfer.files); }, false);
+    }
+
+    function setupDropZone(id) {
+        const zone = document.getElementById(`drop-zone-${id}`);
+        wireDrop(zone, files => handleFile(files[0], id));
+    }
+
+    function resetDropZone(id) {
+        const zone = document.getElementById(`drop-zone-${id}`);
+        zone.innerHTML = `
+            <input type="file" id="file-input-${id}" class="hidden" accept=".xlsx">
+            <p class="text-gray-400 text-sm">ลากไฟล์ <span class="font-mono">UpD${id}_…xlsx</span> มาวางที่นี่</p>
+            <p class="text-gray-500 my-1 text-sm">หรือ</p>
+            <div><button type="button" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-1.5 px-4 rounded-md transition-colors">เลือกไฟล์</button></div>`;
+        const input = zone.querySelector('input');
+        zone.querySelector('button').addEventListener('click', () => input.click());
+        input.addEventListener('change', e => { if (e.target.files.length) handleFile(e.target.files[0], id); });
+    }
+
+    function showLoading(id) {
+        document.getElementById(`drop-zone-${id}`).innerHTML =
+            `<div class="flex flex-col items-center justify-center"><div class="loader"></div><p class="mt-3 text-yellow-400 text-sm">กำลังประมวลผลและอัพโหลด...</p></div>`;
+    }
+
+    function logMessage(id, message, isError = false) {
+        const logEl = document.getElementById(`log-${id}`);
+        const ts = new Date().toLocaleTimeString('th-TH');
+        const color = isError ? 'text-red-400' : 'text-green-400';
+        logEl.innerHTML = `<p class="whitespace-pre-wrap"><span class="${color}">[${ts}] ${escapeHtml(message)}</span></p>` + logEl.innerHTML;
+    }
+
+    // ---------- bulk upload ----------
+    function setupBulk() {
+        const zone = document.getElementById('bulk-drop');
+        const input = document.getElementById('bulk-input');
+        document.getElementById('bulk-btn').addEventListener('click', e => { e.stopPropagation(); input.click(); });
+        zone.addEventListener('click', () => input.click());
+        wireDrop(zone, files => handleBulk(files));
+        input.addEventListener('change', e => { handleBulk(e.target.files); input.value = ''; });
+    }
+
+    function bulkLog(msg, color = 'text-gray-300') {
+        const el = document.getElementById('bulk-log');
+        el.insertAdjacentHTML('beforeend', `<p class="${color}">${escapeHtml(msg)}</p>`);
+    }
+
+    async function handleBulk(fileList) {
+        const files = Array.from(fileList);
+        document.getElementById('bulk-log').innerHTML = '';
+        if (!getUrlOrWarn()) { bulkLog('กรุณาใส่ Apps Script URL ในขั้นที่ 1 ก่อน', 'text-red-400'); return; }
+
+        const jobs = [], skipped = [];
+        const seen = new Set();
+        files.forEach(f => {
+            const slot = slotFromFileName(f.name);
+            if (!slot || !uploaders.some(u => u.id === slot)) skipped.push(`${f.name} (ชื่อไฟล์ไม่ขึ้นต้นด้วย UpD1–UpD9)`);
+            else if (seen.has(slot)) skipped.push(`${f.name} (มีไฟล์ D${slot} ซ้ำ)`);
+            else { seen.add(slot); jobs.push({ file: f, slot }); }
+        });
+        // upload in on-screen order
+        const order = uploaders.map(u => u.id);
+        jobs.sort((a, b) => order.indexOf(a.slot) - order.indexOf(b.slot));
+
+        bulkLog(`พบ ${jobs.length} ไฟล์ที่จับคู่ได้: ${jobs.map(j => 'D' + j.slot).join(', ') || '-'}`, 'text-blue-300');
+        skipped.forEach(s => bulkLog(`ข้าม: ${s}`, 'text-yellow-400'));
+        const missing = uploaders.filter(u => !seen.has(u.id)).map(u => 'D' + u.id);
+        if (missing.length && jobs.length) bulkLog(`ยังไม่มีไฟล์: ${missing.join(', ')}`, 'text-gray-500');
+
+        let ok = 0;
+        for (const j of jobs) {
+            bulkLog(`→ D${j.slot}: ${j.file.name} ...`);
+            if (await handleFile(j.file, j.slot)) ok++;
+        }
+        if (jobs.length) bulkLog(`เสร็จสิ้น: สำเร็จ ${ok} / ${jobs.length} ไฟล์`, ok === jobs.length ? 'text-green-400 font-bold' : 'text-red-400 font-bold');
+    }
+
+    function getUrlOrWarn() {
+        return document.getElementById('appsScriptUrl').value.trim();
+    }
+
+    // ---------- core upload (payload unchanged) ----------
+    function readFileAsArrayBuffer(file) {
+        return new Promise((resolve, reject) => {
+            const r = new FileReader();
+            r.onload = e => resolve(e.target.result);
+            r.onerror = () => reject(new Error('เกิดข้อผิดพลาดในการอ่านไฟล์'));
+            r.readAsArrayBuffer(file);
+        });
+    }
+
+    // returns true on success
+    async function handleFile(file, uploaderId) {
+        const cfg = uploaders.find(u => u.id === uploaderId);
+        const appsScriptUrl = getUrlOrWarn();
+
+        logMessage(uploaderId, `เริ่มอัพโหลด: ${file.name}`);
+
+        if (!appsScriptUrl) {
+            logMessage(uploaderId, 'ข้อผิดพลาด: กรุณาใส่ Google Apps Script Web App URL ก่อน', true);
+            setCardState(uploaderId, 'error');
+            return false;
+        }
+        if (!file.name.toLowerCase().endsWith('.xlsx')) {
+            logMessage(uploaderId, `ข้อผิดพลาด: "${file.name}" ไม่ใช่ไฟล์ .xlsx`, true);
+            setCardState(uploaderId, 'error');
+            return false;
+        }
+        // Guard against dropping a file into the wrong box
+        const slot = slotFromFileName(file.name);
+        if (slot && slot !== uploaderId) {
+            logMessage(uploaderId, `ไม่อัพโหลด: ไฟล์นี้เป็นของ D${slot} แต่วางในกล่อง D${uploaderId}\nกรุณาวางในกล่อง D${slot} หรือใช้ช่องอัพโหลดทีเดียวทุกไฟล์`, true);
+            setCardState(uploaderId, 'error');
+            return false;
+        }
+
+        showLoading(uploaderId);
+        setCardState(uploaderId, 'busy');
+        try {
+            const buf = await readFileAsArrayBuffer(file);
+            const workbook = XLSX.read(buf, { type: 'array' });
+            const sheetName = 'DATA';
+            if (!workbook.SheetNames.includes(sheetName)) throw new Error('ไม่พบแท็บชื่อ "DATA" ในไฟล์ Excel');
+
+            const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' });
+            logMessage(uploaderId, `พบข้อมูล ${jsonData.length} แถวในแท็บ "DATA"`);
+
+            const payload = { spreadsheetId: SPREADSHEET_ID, sheetName: cfg.targetTab, data: jsonData };
+            logMessage(uploaderId, `กำลังส่งข้อมูลไปยังแท็บ ${cfg.targetTab}...`);
+
+            const response = await fetch(appsScriptUrl, {
+                method: 'POST', mode: 'cors', cache: 'no-cache',
+                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                body: JSON.stringify(payload), redirect: 'follow'
             });
-
-            ['dragenter', 'dragover'].forEach(eventName => {
-                dropZone.addEventListener(eventName, () => dropZone.classList.add('dragover'), false);
-            });
-
-            ['dragleave', 'drop'].forEach(eventName => {
-                dropZone.addEventListener(eventName, () => dropZone.classList.remove('dragover'), false);
-            });
-
-            dropZone.addEventListener('drop', (e) => handleDrop(e, uploaderId), false);
-            fileInput.addEventListener('change', (e) => handleFileSelect(e, uploaderId), false);
-        }
-
-        function preventDefaults(e) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
-
-        function handleDrop(e, uploaderId) {
-            const dt = e.dataTransfer;
-            const files = dt.files;
-            if (files.length > 0) {
-                handleFile(files[0], uploaderId);
-            }
-        }
-        
-        function handleFileSelect(e, uploaderId) {
-            const files = e.target.files;
-            if (files.length > 0) {
-                handleFile(files[0], uploaderId);
-            }
-        }
-
-        function logMessage(uploaderId, message, isError = false) {
-            const logEl = document.getElementById(`log-${uploaderId}`);
-            const timestamp = new Date().toLocaleTimeString('th-TH');
-            const colorClass = isError ? 'text-red-400' : 'text-green-400';
-            logEl.innerHTML = `<p class="whitespace-pre-wrap"><span class="${colorClass}">[${timestamp}] ${message}</span></p>` + logEl.innerHTML;
-        }
-        
-        function showLoading(uploaderId) {
-            const dropZone = document.getElementById(`drop-zone-${uploaderId}`);
-            dropZone.innerHTML = `<div class="flex flex-col items-center justify-center"><div class="loader"></div><p class="mt-4 text-yellow-400">กำลังประมวลผลและอัพโหลด...</p></div>`;
-        }
-        
-        function resetDropZone(uploaderId) {
-             const dropZone = document.getElementById(`drop-zone-${uploaderId}`);
-             dropZone.innerHTML = `
-                <input type="file" id="file-input-${uploaderId}" class="hidden" accept=".xlsx">
-                <p class="text-gray-400">ลากไฟล์ .xlsx มาวางที่นี่</p>
-                <p class="text-gray-500 my-2">หรือ</p>
-                <button type="button" onclick="document.getElementById('file-input-${uploaderId}').click()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition-colors">
-                    เลือกไฟล์
-                </button>
-             `;
-        }
-
-        async function handleFile(file, uploaderId) {
-            const uploaderConfig = uploaders.find(u => u.id === uploaderId);
-            const appsScriptUrl = document.getElementById('appsScriptUrl').value.trim();
-            
-            logMessage(uploaderId, `กำลังเริ่มอัพโหลดไฟล์: ${file.name}`);
-
-            if (!appsScriptUrl) {
-                logMessage(uploaderId, 'ข้อผิดพลาด: กรุณาใส่ Google Apps Script Web App URL ก่อน', true);
-                alert('กรุณาใส่ Google Apps Script Web App URL ก่อนทำการอัพโหลด');
-                return;
-            }
-
-            if (!file.name.endsWith('.xlsx')) {
-                logMessage(uploaderId, `ข้อผิดพลาด: ไฟล์ "${file.name}" ไม่ใช่ไฟล์ .xlsx`, true);
-                return;
-            }
-            
-            showLoading(uploaderId);
-
-            const reader = new FileReader();
-            reader.onload = async (e) => {
-                try {
-                    const data = e.target.result;
-                    const workbook = XLSX.read(data, { type: 'binary' });
-                    const sheetName = "DATA";
-
-                    if (!workbook.SheetNames.includes(sheetName)) {
-                        throw new Error(`ไม่พบแท็บชื่อ "DATA" ในไฟล์ Excel`);
-                    }
-
-                    const worksheet = workbook.Sheets[sheetName];
-                    const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
-                    
-                    logMessage(uploaderId, `พบข้อมูล ${jsonData.length} แถวในแท็บ "DATA"`);
-
-                    const payload = {
-                        spreadsheetId: SPREADSHEET_ID,
-                        sheetName: uploaderConfig.targetTab,
-                        data: jsonData
-                    };
-                    
-                    logMessage(uploaderId, `กำลังส่งข้อมูลไปยัง Google Sheet Tab: ${uploaderConfig.targetTab}...`);
-
-                    const response = await fetch(appsScriptUrl, {
-                        method: 'POST',
-                        mode: 'cors',
-                        cache: 'no-cache',
-                        headers: {
-                            'Content-Type': 'text/plain;charset=utf-8',
-                        },
-                        body: JSON.stringify(payload),
-                        redirect: 'follow'
-                    });
-
-                    const responseText = await response.text();
-                    let result;
-                    try {
-                        result = JSON.parse(responseText);
-                    } catch (parseError) {
-                        if (responseText.trim().startsWith('<')) {
-                            throw new Error('Google Apps Script ตอบกลับเป็นหน้าเว็บ HTML (ไม่ได้ตอบกลับเป็น JSON)\n' +
-                                            'โปรดตรวจสอบ:\n' +
-                                            '1. ใน Apps Script ตั้งค่า "Who has access" เป็น "Anyone" (ทุกคน) แล้วหรือยัง?\n' +
-                                            '2. URL สภาพเป็น Web App URL ที่ลงท้ายด้วย /exec หรือยัง?');
-                        } else {
-                            throw new Error(`คำตอบจากเซิร์ฟเวอร์ไม่ถูกต้อง: ${responseText.substring(0, 80)}...`);
-                        }
-                    }
-
-                    if (result.status === 'success') {
-                        logMessage(uploaderId, `อัพโหลดไปยัง "${uploaderConfig.targetTab}" สำเร็จ! อัพเดท ${result.rows} แถว.`);
-                    } else {
-                        throw new Error(result.message || 'เกิดข้อผิดพลาดจาก Apps Script');
-                    }
-
-                } catch (error) {
-                    logMessage(uploaderId, `เกิดข้อผิดพลาด: ${error.message}`, true);
-                } finally {
-                    resetDropZone(uploaderId);
-                    setupEventListenersForUploader(uploaderId);
+            const text = await response.text();
+            let result;
+            try { result = JSON.parse(text); }
+            catch (pe) {
+                if (text.trim().startsWith('<')) {
+                    throw new Error('Apps Script ตอบกลับเป็นหน้าเว็บ HTML (ไม่ใช่ JSON)\nโปรดตรวจสอบ:\n1. Deploy แบบ "Who has access" = "Anyone" แล้วหรือยัง\n2. URL เป็น Web App URL ที่ลงท้ายด้วย /exec หรือยัง');
                 }
-            };
+                throw new Error(`คำตอบจากเซิร์ฟเวอร์ไม่ถูกต้อง: ${text.substring(0, 80)}...`);
+            }
+            if (result.status !== 'success') throw new Error(result.message || 'เกิดข้อผิดพลาดจาก Apps Script');
 
-            reader.onerror = (error) => {
-                logMessage(uploaderId, 'เกิดข้อผิดพลาดในการอ่านไฟล์', true);
-                resetDropZone(uploaderId);
-                setupEventListenersForUploader(uploaderId);
-            };
-
-            reader.readAsBinaryString(file);
+            logMessage(uploaderId, `สำเร็จ! อัพเดท "${cfg.targetTab}" ${result.rows} แถว`);
+            store.set(`last-${uploaderId}`, JSON.stringify({
+                day: todayKey(), time: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
+                file: file.name, rows: result.rows
+            }));
+            renderLast(uploaderId);
+            setCardState(uploaderId, 'success');
+            updateProgress();
+            return true;
+        } catch (error) {
+            logMessage(uploaderId, `เกิดข้อผิดพลาด: ${error.message}`, true);
+            setCardState(uploaderId, 'error');
+            return false;
+        } finally {
+            resetDropZone(uploaderId);
         }
-    </script>
+    }
+</script>
 </body>
 </html>
