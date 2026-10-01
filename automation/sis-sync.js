@@ -17,7 +17,7 @@
  *   await SISSync.run({ dryRun: true, only: [1, 9] })                               // test without writing
  */
 (function () {
-  const VERSION = '2026-09-30.10';
+  const VERSION = '2026-10-01.1';
   const SPREADSHEET_ID = '1bQyqKpH7yxafv8Tg3ufVjCOsG8soCrV-PUJc65pCJ28';
   const XLSX_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
   const pad = n => String(n).padStart(2, '0');
@@ -34,7 +34,7 @@
       Y, M,
       YTD: [ym(Y, 1), ym(Y, M)],
       FULL: [ym(Y, 1), ym(Y, 12)],
-      HALF: [ym(Y, halfStart), ym(Y, M)],                    // half year to date (e.g. Jul→Sep)
+      HALF: [ym(Y, halfStart), ym(Y, halfStart + 5)],          // whole half year: Jan–Jun or Jul–Dec
       CYCLE: [ym(Y, cycleStart), ym(Y, cycleStart + 1)],     // whole current cycle (e.g. Sep→Oct)
       MAT: ym(Y, M)
     };

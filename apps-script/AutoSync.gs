@@ -60,7 +60,7 @@ function periods_(now) {
     Y, M,
     YTD: [ym(Y, 1), ym(Y, M)],
     FULL: [ym(Y, 1), ym(Y, 12)],
-    HALF: [ym(Y, halfStart), ym(Y, M)],
+    HALF: [ym(Y, halfStart), ym(Y, halfStart + 5)],          // whole half year: Jan–Jun or Jul–Dec
     CYCLE: [ym(Y, cycleStart), ym(Y, cycleStart + 1)],
     MAT: ym(Y, M)
   };
