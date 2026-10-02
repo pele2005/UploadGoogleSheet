@@ -420,10 +420,10 @@ function runSync_(opts, tasks) {
     lock.releaseLock();
   }
   const ok = results.filter(r => r.ok).length;
-  const lines = results.map(r => `${r.ok ? '✅' : '❌'} ${r.id}  ${r.period || ''}  ${r.ok ? r.rows + ' rows' : r.error}${r.retried ? ' (retried)' : ''}`);
+  const lines = results.map(r => `${r.ok ? '✅' : '❌'} ${r.id}  ${r.period || ''}  ${r.ok ? r.rows + ' rows' : r.error}${r.note ? '  · ' + r.note : ''}${r.retried ? ' (retried)' : ''}`);
   const summary = `SIS sync ${opts.write ? '' : '(DRY RUN) '}— ${ok}/${plan.length} OK — ${tasks.join(' + ')}\n\n` + lines.join('\n');
   console.log(summary);
-  notify_(ok === plan.length, summary, opts);
+  notify_(ok === plan.length && !results.some(r => r.typFailed), summary, opts);
   return summary;
 }
 
@@ -434,6 +434,14 @@ function runJob_(token, job, P, opts) {
     checkPeriod_(rows, job, P);
     res.rows = opts.write ? writeTab_('Data_uploadD' + job.id, rows) : rows.length;
     res.ok = true;
+    // Total Year Progression: refresh tab TYP from the full-year file (updateTYP_ lives in Code.gs).
+    // A TYP problem is reported in the summary but never fails the D4 upload itself.
+    if (job.id === 4 && opts.write) {
+      try {
+        const t = updateTYP_(SpreadsheetApp.openById(SHEET_ID), rows);
+        res.note = `TYP ${t.status}: ${(t.grandActual / t.grandPlan * 100).toFixed(2)}%`;
+      } catch (e) { res.note = 'TYP FAILED: ' + String(e.message || e); res.typFailed = true; }
+    }
   } catch (e) {
     res.ok = false; res.error = String(e.message || e);
   }
